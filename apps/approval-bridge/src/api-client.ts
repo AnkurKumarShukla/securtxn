@@ -6,11 +6,23 @@
 //
 // Spec: docs/architecture.md §4.3
 
+import { readFileSync } from "node:fs";
+import { Agent, setGlobalDispatcher } from "undici";
 import { PendingProposalList, type PendingProposal, type ReportSentRequest } from "@cp/shared-types";
 import type { BridgeConfig } from "./config.js";
 
 export class ApiClient {
-  constructor(private readonly config: BridgeConfig) {}
+  constructor(private readonly config: BridgeConfig) {
+    // A private CA is trusted by ADDING it, never by turning verification off.
+    // There is deliberately no code path here that sets rejectUnauthorized to
+    // false — the certificate check is what makes the recipient on screen the
+    // recipient the API actually sent.
+    if (config.BRIDGE_CA_CERT_PATH) {
+      setGlobalDispatcher(
+        new Agent({ connect: { ca: readFileSync(config.BRIDGE_CA_CERT_PATH, "utf8") } }),
+      );
+    }
+  }
 
   async listPending(): Promise<PendingProposal[]> {
     const body = await this.request("GET", "/approvals/pending");

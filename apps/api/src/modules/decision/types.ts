@@ -27,6 +27,14 @@ export type DecisionInput = {
   verificationTier: VerificationTier;
   matchResult: MatchResult;
   sanctionsHit: boolean;
+  /**
+   * An earlier payment already settled for this invoice.
+   *
+   * A hard block: paying the same invoice twice is money gone for the same
+   * reason as a misdirect, and the second one is usually a process error rather
+   * than fraud — which is exactly why nothing downstream catches it.
+   */
+  isDuplicate: boolean;
   isNewOrChangedAddress: boolean;
   amount: DecimalLike;
 };

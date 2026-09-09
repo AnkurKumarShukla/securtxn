@@ -28,6 +28,12 @@ export function decide(input: DecisionInput, cfg: TierThresholds): Decision {
     return { decision: "DO_NOT_SEND", reasonCode: "SANCTIONS_HIT", tierLimitApplied: null };
   }
 
+  // Before the payee checks: this is about the PAYMENT, not the party. A
+  // duplicate to a perfectly verified vendor is still money gone.
+  if (input.isDuplicate) {
+    return { decision: "DO_NOT_SEND", reasonCode: "DUPLICATE_PAYMENT", tierLimitApplied: null };
+  }
+
   // Covers both PENDING_VERIFICATION and REVOKED. A wallet that has not passed
   // all three gates (D34), or has been revoked since, is not a payout address.
   if (input.vendorWallet.status !== "CONFIRMED") {

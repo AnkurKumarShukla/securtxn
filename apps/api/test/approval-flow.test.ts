@@ -74,8 +74,8 @@ afterAll(async () => {
     .map((v) => v.photoEncryptedRef)
     .filter((id): id is string => id !== null);
 
-  // Confirming a wallet issues a credential when ATS_ISSUER_PRIVATE_KEY is set
-  // (D40); VerifiableCredential.walletId is onDelete: Restrict.
+  // VerifiableCredential holds Restrict FKs to vendor and wallet, so it must
+  // go first or the deletes below throw and leave rows for the next run.
   await prisma.verifiableCredential.deleteMany({ where: { vendorId: { in: vendorIds } } });
   await prisma.vendorWallet.deleteMany({ where: { vendorId: { in: vendorIds } } });
   await prisma.vendor.deleteMany({ where: { id: { in: vendorIds } } });

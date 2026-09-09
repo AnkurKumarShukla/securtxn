@@ -56,6 +56,8 @@ afterAll(async () => {
     .map((v) => v.photoEncryptedRef)
     .filter((id): id is string => id !== null);
 
+  await prisma.verifiableCredential.deleteMany({ where: { vendorId: { in: createdVendorIds } } });
+  await prisma.vendorWallet.deleteMany({ where: { vendorId: { in: createdVendorIds } } });
   await prisma.vendor.deleteMany({ where: { id: { in: createdVendorIds } } });
   if (blobIds.length) await prisma.encryptedBlob.deleteMany({ where: { id: { in: blobIds } } });
 

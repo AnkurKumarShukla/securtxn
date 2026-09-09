@@ -1010,3 +1010,202 @@ WASM, D44 the invented endpoint): a check that silently moved from the provider
 to us is worse than a missing feature, because everything keeps returning 200.
 The only defence is reading the migration notes for what *stopped* being done on
 our behalf — not just what the new API accepts.
+
+### D50 · Credential claims are assertions, not evidence — `build`
+
+The credential is referenced from a public chain and may be disclosed in full,
+so it has to be safe to disclose in full. Every claim is a boolean, an enum, or
+an opaque identifier — it asserts THAT each check passed, never what the
+documents said. Two tests enforce this: one over the issued object, one over the
+persisted row, both asserting the payee's name, Aadhaar digits, phone and
+address do not appear.
+
+- **EIP-712, not JWS.** The on-chain `issuer` argument is an address, so a
+  verifier recovers the signer and compares it directly — no key-resolution step
+- **the signature covers a hash of the whole claim set**, so adding a claim later
+  cannot silently produce a credential that verifies against an older shape
+- **chainId is in the domain**: a testnet credential will not verify on mainnet
+- **`expiresAt` comes from `aadhaarKycTtl`** and becomes the on-chain `validTo`.
+  D06's time-bounded verification becomes an on-chain expiry, so a stale identity
+  stops being transferable without anyone remembering to act
+- **`usable` is computed on read, never stored.** A cached flag goes stale the
+  moment the expiry passes, and this gates an on-chain grant
+- **no issuer key means no credential**, rather than an unsigned one — fails closed
+
+**Test-hygiene consequence, learned the hard way**: `VerifiableCredential` holds
+`onDelete: Restrict` FKs to both Vendor and VendorWallet, so any suite cleanup
+that skipped it threw, left rows behind, and the next run inherited them. The
+suite degraded from 26 seconds to 40 minutes across runs before the cause was
+obvious. Every suite that confirms a wallet now deletes credentials first.
+
+### D51 · The on-chain grant is a separate, retryable step — `build`
+
+**Not folded into `callback-confirm`.** Vendor onboarding must not depend on a
+chain being reachable: an RPC outage, or a security that has not been issued
+yet, would otherwise block a verification that is complete and correct
+off-chain. So confirmation mints the credential, and
+`POST /vendors/:id/wallets/:walletId/grant-kyc` submits it separately and can be
+retried.
+
+**Four guards before anything is submitted:**
+
+- wallet must be `CONFIRMED` — the grant asserts the platform verified this payee, and a wallet that never cleared the three gates (D34) has nothing to assert
+- `ATS_SECURITY_ID` must be set — no token to grant against means the call would go into the void
+- credential must be usable — putting a stale assertion on chain with an already-passed validity window is worse than not granting
+- credential issuer must equal the gateway's issuer address — the chain records `issuer` as an address, and a mismatch means a verifier cannot connect the credential to the grant
+- plus `grantedTxHash` makes a second grant a 409
+
+**Waits for the receipt.** A submitted transaction that later reverts would
+leave the platform believing a wallet is transferable when the token disagrees.
+
+**Address resolution goes through the mirror node**, deliberately not the
+"long-zero" derivation (`0x` + padded entity number). Long-zero is only valid
+for entities that never received a distinct EVM address; a contract deployed
+through the ATS factory has a real one — `0.0.9213391` resolves to
+`0xd1f118a4…`, nothing like its long-zero form. Using long-zero would address a
+different, non-existent account.
+
+**The ABI is pinned and tested**, trimmed to the four functions used. A drifted
+signature would encode a call the contract rejects, and a test asserts
+`grantKyc(address,string,uint256,uint256,address)` against `IKyc.json` 8.0.0.
+
+**Missing config yields the mock**, not a half-wired client that fails at call
+time — and the mock reports `broadcast: false`, so its result can never be
+presented as an on-chain grant (D21, D32).
+
+### D52 · Issuance is headless against the factory ABI, and every failure taught a rule — `build`
+
+The SDK is browser-only (D42), but the contracts package ships ABIs — so
+issuance runs from `packages/contracts/scripts/deploy-testnet.ts` instead of a
+UI. Reproducible, reviewable, in the repo as evidence ATS was actually used, and
+re-runnable for a fresh security whenever one is needed.
+
+**Live result**: bond `0.0.10444329` (`0x8418e766…`), internal KYC enforced,
+issuer registered, one payee granted — verified by reading `getKycStatusFor`:
+the granted wallet returns 1, an unrelated address returns 0.
+
+Four reverts, each now encoded as a guard so it cannot recur:
+
+| Revert | Rule learned |
+|---|---|
+| `WrongISINChecksum` | the factory enforces ISO 6166. `completeIsin()` computes the check digit, validated against four real published ISINs |
+| `RegulationTypeAndSubTypeForbidden(0,0)` | only REG_S+NONE or REG_D+506_x are accepted. NONE/NONE reverts. Defaults to Reg S — the offering is outside the US |
+| `NewMaxSupplyCannotBeZero` | zero is rejected, not treated as uncapped |
+| `AccountIsNotIssuer` | `grantKyc` only honours an issuer registered via `addIssuer`, which itself needs `ROLE_SSI_MANAGER`. That check is the point, not an obstacle: the token trusts credentials from issuers it was told to trust |
+
+A fifth failure was ours: `deployBond` succeeded but the address could not be
+decoded, because the `BondDeployed` event carries two nested structs that our
+partial ABI omitted, giving a different topic hash. Now the new proxy is
+identified as the log emitter that is not the factory — stable regardless of
+event shape.
+
+**Broadcasting is opt-in.** `COMPLIANCE_GATEWAY` defaults to `mock`; only
+`ats` writes real transactions. Inferring it from the presence of credentials
+meant every test process silently selected the live chain the moment the Hedera
+keys were filled in — one test did reach the network before this was fixed.
+
+### D53 · The compliance gate is demonstrated by a transfer that fails — `build`
+
+`pnpm --filter @cp/contracts lifecycle` runs the whole story against testnet:
+
+1. mint units of the receivable to the KYC-granted payee
+2. the payee attempts a transfer to an address the platform never verified — **rejected by the contract**
+3. the platform grants KYC to that address
+4. the same transfer, retried — **succeeds**
+
+Step 2 is the deliverable. Anyone can show a token moving; showing a token
+*refusing* to move, because our DigiLocker pipeline never confirmed the
+recipient, is what makes the compliance control real rather than a badge beside
+one. Balances afterwards: payee 90000, recipient 10000, supply 100000.
+
+**`validTo = 0` is not "no expiry".** The contract rejects it with
+`InvalidDates()`. Encoding a missing `aadhaarKycTtl` as zero would have failed
+every grant for a credential without a TTL — in production, not just the demo.
+It is now a far-future date, and `NO_EXPIRY_SECONDS` documents why.
+
+`mint` needs `ROLE_ISSUER`, granted on demand by the script. The demo is
+idempotent and re-runnable, which matters because it is what the video films.
+
+### D54 · Duplicate detection belongs in the engine; a block that nobody investigates is half a control — `build`
+
+**`isDuplicate` is an input to `decide()`**, not a check scattered in the
+payment service. Ranked immediately after sanctions and before every payee
+check, because it is about the PAYMENT rather than the party: a duplicate to a
+perfectly verified vendor is still money gone. Precedence is tested — a
+sanctions hit still wins.
+
+**Matched on vendor + invoiceRef against settled payments only.** Amount is
+deliberately excluded: a duplicate raised for a slightly different figure is the
+common shape of the mistake, and matching on amount would miss exactly those.
+
+**Blocking is not enough.** A blocked duplicate opens an `ExceptionCase` in the
+same transaction as the decision and its evidence (D07) — someone has to find
+out why a second payment was raised for a settled invoice. Verified end to end:
+the payment stays at `DECISION_PENDING`, `propose` returns 422, and the case
+carries its playbook.
+
+**Playbooks are ordered, concrete actions**, not status labels. For a misdirect
+the first step is "freeze further payments to this vendor wallet" — stop the
+bleeding before investigating. An exception desk that does not say what to do
+next is a list.
+
+**A resolved case cannot be mutated.** Reopening by edit would erase what was
+decided; a new case is the honest way to revisit it.
+
+**Acknowledgment is non-repudiation of receipt.** The signature must recover to
+the address the money actually went to — otherwise a third party could
+manufacture a receipt for someone else's payment. The raw context is encrypted
+into an `ACK_CONTEXT` blob and only the commitment reaches the evidence chain,
+with a test asserting the invoice reference does not appear in the payload.
+
+Both the server and the recipient hash the context with sorted keys, since the
+signer builds that object independently and insertion order must not change the
+commitment (D36).
+
+**TLS 1.3 removed from the checklist**, not deferred silently: everything runs
+on localhost, so there is nothing to terminate TLS on. It is a real requirement
+the moment anything is deployed, and it is recorded as `[-]` with that reason
+rather than left as an open task that will never be ticked.
+
+### D55 · TLS has three modes, and the bridge leg is the one that matters — `build`
+
+Reversing the earlier call to drop TLS as localhost-only: the app is being
+deployed, so it is implemented properly and works in both places.
+
+```
+off        plain HTTP. Local development only; production refuses to boot with it
+terminated a proxy terminates TLS. The app trusts x-forwarded-proto and answers
+           426 for anything that reached the proxy in the clear
+direct     this process serves HTTPS itself, minVersion TLSv1.3
+```
+
+**Explicit, never inferred from NODE_ENV.** "Is this connection encrypted" is
+not something to guess at, and inferring it is how a staging box ends up serving
+plaintext while believing otherwise.
+
+**`trustProxy` is enabled only in `terminated` mode.** Trusting forwarded
+headers with nothing in front would let a client set its own `x-forwarded-for`
+and `x-forwarded-proto` — spoofing its IP past rate limiting and claiming an
+encrypted connection it does not have.
+
+**426, not a redirect.** This is an API; silently redirecting a POST drops its
+body while looking like it worked. Health probes are exempt so an internal check
+does not read as an outage.
+
+**HSTS only when the connection is actually encrypted** — sending it over plain
+HTTP locally would pin a browser to `https://localhost` and break every other
+project on that origin.
+
+**The bridge leg is the reason any of this matters.** The bridge holds the only
+signing key and prints a recipient and amount for a human to confirm. Anyone
+able to sit on that connection chooses what the operator sees, and therefore
+where the money goes — the human confirmation step is only as trustworthy as the
+channel feeding it. So:
+
+- a plaintext `API_BASE_URL` is refused unless `BRIDGE_ALLOW_INSECURE=true` is set deliberately
+- a private CA is trusted by **adding** it (`BRIDGE_CA_CERT_PATH`), and there is no setting anywhere that disables certificate verification
+- `cert:dev` generates a local certificate, so development exercises the same verification path as a deployment rather than skipping it
+
+Verified end to end: TLS 1.3 negotiated, plaintext refused on the TLS port,
+`curl` succeeds against the CA without `-k`, the bridge works with the CA and
+fails without it.

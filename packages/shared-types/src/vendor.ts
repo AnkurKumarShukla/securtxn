@@ -133,3 +133,44 @@ export const WalletSummary = z.object({
   supersededById: Uuid.nullable(),
 });
 export type WalletSummary = z.infer<typeof WalletSummary>;
+
+/**
+ * The credential ATS references on-chain via
+ * `grantKyc(account, vcId, validFrom, validTo, issuer)`.
+ *
+ * Safe to disclose in full: every claim is a boolean, an enum, or an opaque
+ * identifier. It asserts THAT checks passed, never the documents behind them
+ * (D42).
+ */
+export const CredentialClaims = z.object({
+  providerUserId: z.string(),
+  verificationTier: VerificationTier,
+  xmlSignatureVerified: z.boolean(),
+  crossDocConsistent: z.boolean(),
+  sameSubjectLinked: z.boolean(),
+  walletControlProven: z.boolean(),
+  identityBindingSigned: z.boolean(),
+  callbackConfirmed: z.boolean(),
+  addressVerifiedMethod: z.string(),
+  country: CountryCode,
+  onboardingSessionNonce: z.string(),
+});
+export type CredentialClaims = z.infer<typeof CredentialClaims>;
+
+export const CredentialResponse = z.object({
+  credentialId: Uuid,
+  subjectAddress: EvmAddress,
+  claims: CredentialClaims,
+  signature: z.string(),
+  /** Matches the `issuer` argument of the on-chain grant. */
+  issuerAddress: EvmAddress,
+  issuedAt: z.string().datetime(),
+  /** From aadhaarKycTtl; becomes the on-chain validTo (D06). */
+  expiresAt: z.string().datetime().nullable(),
+  revokedAt: z.string().datetime().nullable(),
+  /** Set once the on-chain grant lands, so a re-run cannot double-grant. */
+  grantedTxHash: z.string().nullable(),
+  /** Not revoked and not expired — the platform's own gate before granting. */
+  usable: z.boolean(),
+});
+export type CredentialResponse = z.infer<typeof CredentialResponse>;

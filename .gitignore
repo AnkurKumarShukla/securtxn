@@ -12,6 +12,9 @@
 sbox_live_key.csv
 sbox_test_key.csv
 *.pem
+# Dev TLS material (arv's `pnpm cert:dev`). Regenerated in one command, and a
+# committed private key is a committed private key even in development.
+apps/api/certs/
 *.p12
 *.pfx
 *.keystore

@@ -217,30 +217,41 @@ half-built five-page dashboard costs B1 time and adds nothing to the pitch.
 
 ### A10 · Recipient ack + exception playbooks
 
-- [ ] `POST /payments/:id/acknowledgment` — server-side signature verify
-- [ ] Exception opened on reconciliation mismatch
-- [ ] Playbook step tracking per `ExceptionType`
-- [ ] Duplicate-payment attempt blocked before the approval queue, opens `ExceptionCase`
+- [x] `POST /payments/:id/acknowledgment` — EIP-712 verified server-side; the signer
+      must be the address the money went to → D47
+- [x] Raw acknowledged context encrypted into an `ACK_CONTEXT` blob; only the
+      commitment reaches evidence → D47
+- [x] Duplicate detection is a hard block **inside `decide()`**, ranked below sanctions → D47
+- [x] A blocked duplicate auto-opens an `ExceptionCase` in the same transaction → D07, D47
+- [x] Playbooks per `ExceptionType` — ordered, concrete operator actions → D47
+- [x] `POST/GET/PATCH /exceptions` with step tracking; a closed case is immutable → D47
+- [x] 11 tests, incl. the duplicate blocked before the approval queue
 
 ### A11 · Cross-cutting security (§5)
 
-- [ ] HMAC pepper from KMS/env, never literal
-- [x] AES-256-GCM at rest for PII columns + evidence blobs — 5 crypto tests incl. tamper and wrong-key rejection
-- [ ] TLS 1.3 service-to-service incl. bridge → api
-- [x] RBAC on evidence reads, and the read is itself recorded → D18
-- [ ] No secrets committed
-- [x] **RLS enabled on all 11 public tables** → D46. The database was wide open through Supabase's REST API: every table readable, and UPDATE/DELETE permitted, with only the *publishable* key — a key designed to ship in browsers
+- [x] HMAC pepper from env, never literal — `lib/crypto.ts`, tested
+- [x] AES-256-GCM at rest — DOB, address, portrait, and the acknowledged context blob; 5 crypto tests incl. tamper and wrong-key rejection
+- [x] TLS 1.3 — three modes (`off` / `terminated` / `direct`), production refuses `off` → D55
+- [x] `direct` verified: TLS 1.3 negotiated, plaintext refused, CA trust works without `-k`
+- [x] `terminated` returns 426 for `x-forwarded-proto: http`; health probes exempt → D55
+- [x] `trustProxy` only when a proxy is actually in front, never inferred → D55
+- [x] Bridge refuses a plaintext API URL and trusts a private CA by ADDING it → D55
+- [x] `cert:dev` script for local HTTPS, so the same certificate check runs locally
+- [x] RBAC on evidence reads, and the read is itself audited → D18
+- [x] No secrets committed — verified: `.env`, key CSVs, real fixtures all untracked
+- [x] **RLS enabled on every public table** → D46, re-asserted by migration after each new table. The database was wide open through Supabase's REST API: every table readable, and UPDATE/DELETE permitted, with only the *publishable* key — a key designed to ship in browsers
 - [ ] Rotate the publishable key — it has been exposed in a working session and sits in `.env`
 - [ ] Decide whether Supabase's REST layer is needed at all; if not, restricting the exposed schema removes the door rather than locking it
-- [ ] Both EIP-712 verifications server-side
+- [x] EIP-712 verified server-side — control proof, identity binding, and recipient ack
 
 ### A12 · Core-complete checkpoint
 
-- [ ] Full flow demoable end-to-end with every partner stubbed
-- [ ] Every stub is a **named implementation behind an interface**, never a blank 200 route → D21
-- [ ] Unimplemented routes return 501, not 200 → D21
-- [ ] Failure branches all exercised by injection, not by waiting on a real integration → D21
-- [ ] Tag this commit — it is the fallback demo if no partner integration lands
+- [x] Full flow demoable end-to-end — driven through the real CLI and curl, not only tests
+- [x] Every stub is a named implementation behind an interface → D21
+      (`GenericKycProvider`, `StubSanctionsScreener`, `MockComplianceGateway`, `UnavailableTransport`)
+- [x] No blank 200 routes exist; unimplemented paths raise `NotImplementedError` → 501 → D21
+- [x] Failure branches exercised by injection throughout → D21
+- [x] Tag the commit — the fallback demo if a partner integration regresses
 
 ---
 
@@ -253,40 +264,55 @@ partner on `main` turns a working demo into a broken one. → D20
 
 **Qualification bars — all four are mandatory, all four are at zero:**
 
-- [ ] Use ATS to issue or manage a tokenised asset
-- [ ] Deploy and demonstrate on Hedera **testnet**
+- [x] Use ATS to issue or manage a tokenised asset — bond `0.0.10444329` issued via the factory
+- [x] Deploy and demonstrate on Hedera **testnet** — issuance + KYC grant both landed
 - [ ] Public GitHub repo; contracts verified on **HashScan** where applicable
 - [ ] Demo video **≤5 min**: issuance + configuration + ≥1 lifecycle operation
+      (script ready: `deploy:testnet` → `prepare:security` → `lifecycle`)
 
 **Prerequisites**
 
 - [x] SDK surface verified against the installed 1.17.0 — §4.5's code does not exist → D40
-- [ ] Hedera testnet operator account (portal.hedera.com); separate anchoring vs deploy accounts → D40
+- [x] Hedera testnet ECDSA account `0.0.10443799`; key derives the portal EVM address, 1000 HBAR
+- [x] ATS testnet addresses — resolver `0.0.9212226`, factory `0.0.9213391`, verified live via mirror node
+- [x] Bond config id `0x..02`; empty version resolves the latest at submit time
+- [ ] Second ECDSA account for HCS anchoring, so the API key stays low-privilege → D40
 - [x] Network/connection wiring verified — SDK is browser-only, no headless signer → D42
 - [x] Contracts package ships ABIs + Solidity, so headless KYC grants are viable → D42
 - [ ] MetaMask (or HashPack) on Hedera testnet for the issuance screen → D42
 
 **Issuance**
 
-- [ ] `Bond.create(CreateBondRequest)` for a verified receivable — real fields: `isin`, `nominalValue`, `numberOfUnits`, `startingDate`, `maturityDate`, `couponFrequency`
-- [ ] `internalKycActivated: true` so the token enforces KYC itself → D40
-- [ ] Contract visible on HashScan
+- [x] Issued headlessly via `deployBond` against the factory ABI — reproducible, in-repo → D45
+- [x] `internalKycActivated: true` — verified on chain, the token enforces KYC itself
+- [x] Contract visible on HashScan: https://hashscan.io/testnet/contract/0.0.10444329
 
 **Compliance — the differentiator**
 
-- [ ] `SsiManagement.addIssuer` — register the platform as a trusted credential issuer → D40
-- [x] Issue a verifiable credential when a wallet reaches CONFIRMED; the DigiLocker checks + nonce-bound attestation are what it asserts → D40. **Tested end to end** (`credential-issuance.test.ts`, 6): the real DigiLocker fixtures walk identity → control proof → binding → callback to CONFIRMED, then assert the credential exists, its EIP-712 signature **recovers to the configured issuer**, a tampered claim breaks that recovery, claims carry no name/address/PAN/Aadhaar digits, expiry tracks `aadhaarKycTtl`, and a missing issuer key fails closed without blocking confirmation
-- [x] Dev issuer key generated; `ATS_ISSUER_PRIVATE_KEY` + `HEDERA_CHAIN_ID` documented in `.env.example` — they were not
-- [x] Teardown in 4 existing test files made credential-aware. Turning the feature on meant confirmations started issuing credentials, and `VerifiableCredential.walletId` is `onDelete: Restrict` — so cleanup began failing on the FK while the tests themselves passed. 84 orphaned vendors from the crashed teardowns cleared. **Any new test that confirms a wallet now needs the same cleanup**
-- [ ] On-chain call is `grantKyc(account, vcId, validFrom, validTo, issuer)` — reference only, no PII → D42
-- [ ] `validTo` = `aadhaarKycTtl`, so a stale identity expires on chain by itself → D06, D42
-- [ ] `Kyc.grantKyc({ securityId, targetId, vcBase64 })` driven by A8's registry as source of truth → D40
-- [ ] `Kyc.revokeKyc` when a wallet is revoked
-- [ ] **Demo the rejection**: transfer to a non-granted account fails on-chain
+- [x] `addIssuer` — platform registered as trusted issuer; `prepare:security` script is idempotent → D45
+- [x] `VerifiableCredential` model — credential body off-chain, chain holds a reference → D42
+- [x] `lib/vc.ts` — EIP-712 issuance signed by the platform issuer key → D42
+- [x] Issued automatically when a wallet reaches CONFIRMED; claims record all six gates → D40
+- [x] `GET /vendors/:id/wallets/:walletId/credential` — safe to disclose in full
+- [x] `expiresAt` from `aadhaarKycTtl`; `usable` computed on read, never cached → D06
+- [x] 11 credential tests + 4 integration, incl. a PII-leak assertion on the claims
+- [x] On-chain call is `grantKyc(account, vcId, validFrom, validTo, issuer)` — reference only, no PII → D42
+- [x] `validTo` = `aadhaarKycTtl`; absent TTL becomes a far-future date, never 0 → D06, D46
+- [x] `ComplianceGateway` interface + `AtsComplianceGateway` (viem, headless) + mock → D40, D44
+- [x] KYC ABI pinned from `IKyc.json` 8.0.0, with a test asserting the signature → D44
+- [x] Hedera id → EVM address via the mirror node, not long-zero derivation → D44
+- [x] `POST /vendors/:id/wallets/:walletId/grant-kyc` — separate and retryable → D44
+- [x] Guards: wallet must be CONFIRMED, credential usable, issuer matches, no double grant
+- [x] Waits for the receipt; a reverted grant is an error, not a success → D44
+- [x] 11 gateway tests + 4 grant-path guard tests
+- [x] Grant verified end to end: granted payee reads 1, an ungranted address reads 0
+- [ ] `revokeKyc` wired to wallet revocation (no revoke endpoint yet)
+- [x] **Rejection demonstrated on chain**: transfer to a non-granted account reverts, then succeeds once KYC is granted → D46
 
 **Lifecycle — "real lifecycle management over a token with a name on it"**
 
-- [ ] `setCoupon` / `getAllCoupons`
+- [x] Mint + transfer lifecycle proven on testnet (`pnpm --filter @cp/contracts lifecycle`) → D46
+- [ ] `setCoupon` / `getAllCoupons` — optional extra, distribution
 - [ ] `redeemAtMaturityByPartition` — maturity settlement
 - [ ] HTLC settlement leg on Hedera (HSCS, EVM-compatible): claim-by-preimage doubles as the recipient acknowledgment; unclaimed refunds → D41
 - [ ] Settlement mode is per-payment `direct | htlc`, never a replacement for plain transfer → D41

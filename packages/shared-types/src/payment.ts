@@ -29,6 +29,7 @@ export type CreatePaymentRequest = z.infer<typeof CreatePaymentRequest>;
  */
 export const DecisionReasonCode = z.enum([
   "SANCTIONS_HIT",
+  "DUPLICATE_PAYMENT",
   "WALLET_NOT_CONFIRMED",
   "TIER_UNVERIFIED",
   "VENDOR_MATCH_FAILED",
@@ -74,6 +75,25 @@ export type PaymentSummary = z.infer<typeof PaymentSummary>;
 export const AcknowledgmentRequest = z.object({
   recipientAddress: EvmAddress,
   recipientSignature: z.string().regex(/^0x[a-fA-F0-9]{130}$/),
-  recipientCommitment: Bytes32,
+  /**
+   * The raw context the recipient acknowledged. Hashed to produce the
+   * commitment, then stored encrypted — never on chain (design principle 2).
+   */
+  acknowledgedContext: z.object({
+    invoiceRef: z.string(),
+    amount: AmountString,
+    token: z.string(),
+    txHash: z.string(),
+    note: z.string().max(500).optional(),
+  }),
 });
 export type AcknowledgmentRequest = z.infer<typeof AcknowledgmentRequest>;
+
+export const AcknowledgmentResponse = z.object({
+  paymentRequestId: Uuid,
+  recipientAddress: EvmAddress,
+  /** keccak256 over the canonical acknowledged context. */
+  recipientCommitment: Bytes32,
+  verifiedAt: z.string().datetime(),
+});
+export type AcknowledgmentResponse = z.infer<typeof AcknowledgmentResponse>;

@@ -17,6 +17,7 @@ import { CreVendorMatcher } from "./modules/vendorMatch/CreVendorMatcher.js";
 import { invokeWorkflow } from "./modules/vendorMatch/creGateway.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { createVendorMatchRequestStore } from "./modules/vendorMatch/vendorMatchRequestStore.js";
+import { AtsComplianceGateway, MockComplianceGateway, type ComplianceGateway } from "@cp/contracts";
 import type { PrismaClient } from "@prisma/client";
 import type { IdentityProvider } from "./modules/identity/IdentityProvider.js";
 import { createIdentityProvider } from "./modules/identity/providers/index.js";
@@ -29,6 +30,8 @@ export type Container = {
   vendorMatcher: VendorMatcher;
   sanctionsScreener: SanctionsScreener;
   tierThresholds: TierThresholds;
+  /** On-chain KYC. Mock until the Hedera credentials and a security exist. */
+  complianceGateway: ComplianceGateway;
 };
 
 declare module "fastify" {
@@ -77,6 +80,23 @@ export function createContainer(
 
     sanctionsScreener: createSanctionsScreener(config),
     tierThresholds: createTierThresholds(config),
+
+    // Real gateway only when explicitly selected AND fully configured. The
+    // default is mock, so broadcasting a transaction is always a deliberate
+    // choice — and the mock reports broadcast:false, so its result can never
+    // be mistaken for an on-chain grant (D21).
+    complianceGateway:
+      config.COMPLIANCE_GATEWAY === "ats" &&
+      config.ATS_ISSUER_PRIVATE_KEY &&
+      config.HEDERA_JSON_RPC_URL &&
+      config.HEDERA_MIRROR_NODE_URL
+        ? new AtsComplianceGateway({
+            chainId: config.HEDERA_CHAIN_ID,
+            rpcUrl: config.HEDERA_JSON_RPC_URL,
+            mirrorNodeUrl: config.HEDERA_MIRROR_NODE_URL,
+            issuerPrivateKey: config.ATS_ISSUER_PRIVATE_KEY,
+          })
+        : new MockComplianceGateway(),
   };
 }
 
@@ -130,6 +150,7 @@ async function containerPlugin(app: FastifyInstance): Promise<void> {
       identityProvider: app.config.IDENTITY_PROVIDER,
       vendorMatcher: app.config.VENDOR_MATCHER,
       sanctionsScreener: "stub",
+      complianceGateway: app.container.complianceGateway.kind,
     },
     "resolved swappable implementations",
   );

@@ -148,3 +148,93 @@ describe("openapi document", () => {
     expect(doc.components.securitySchemes.bearerAuth).toBeDefined();
   });
 });
+
+describe("TLS configuration (§5)", () => {
+  const baseEnv = {
+    DATABASE_URL: "postgresql://u:p@localhost:5432/db",
+    HMAC_PEPPER: "a".repeat(64),
+    PII_ENCRYPTION_KEY: "b".repeat(64),
+    JWT_AGENT_SECRET: "1".repeat(32),
+    JWT_APPROVER_SECRET: "2".repeat(32),
+    JWT_BRIDGE_SECRET: "3".repeat(32),
+    ENABLE_DOCS: "false",
+  };
+
+  it("defaults to off for local development", () => {
+    expect(EnvSchema.parse(baseEnv).TLS_MODE).toBe("off");
+  });
+
+  it("refuses plaintext in production", () => {
+    // The bridge acts on what this API sends. Serving that in the clear lets
+    // anyone on the path choose the recipient a human is asked to confirm.
+    const result = EnvSchema.safeParse({ ...baseEnv, NODE_ENV: "production", TLS_MODE: "off" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes("TLS_MODE"))).toBe(true);
+    }
+  });
+
+  it("accepts a terminating proxy in production", () => {
+    expect(
+      EnvSchema.safeParse({ ...baseEnv, NODE_ENV: "production", TLS_MODE: "terminated" }).success,
+    ).toBe(true);
+  });
+
+  it("requires a certificate and key for direct mode", () => {
+    expect(EnvSchema.safeParse({ ...baseEnv, TLS_MODE: "direct" }).success).toBe(false);
+    expect(
+      EnvSchema.safeParse({
+        ...baseEnv,
+        TLS_MODE: "direct",
+        TLS_CERT_PATH: "/tmp/cert.pem",
+        TLS_KEY_PATH: "/tmp/key.pem",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("trusts forwarded headers only behind a proxy", async () => {
+    // Trusting x-forwarded-* with nothing in front would let a client spoof its
+    // own IP past rate limiting and claim an encrypted connection it lacks.
+    const { tlsServerOptions } = await import("../src/lib/tls.js");
+    const config = loadConfig();
+    expect(tlsServerOptions({ ...config, TLS_MODE: "off" }).trustProxy).toBe(false);
+    expect(tlsServerOptions({ ...config, TLS_MODE: "terminated" }).trustProxy).toBe(true);
+  });
+
+  it("rejects a request that reached the proxy in the clear", async () => {
+    const config: Config = {
+      ...loadConfig(),
+      NODE_ENV: "test",
+      isProduction: false,
+      RATE_LIMIT_MAX: 1_000_000,
+      TLS_MODE: "terminated",
+    };
+    const proxied = await buildServer(config);
+    await proxied.ready();
+
+    const insecure = await proxied.inject({
+      method: "GET",
+      url: "/swagger/json",
+      headers: { "x-forwarded-proto": "http" },
+    });
+    // 426 rather than a redirect: silently redirecting a POST drops its body.
+    expect(insecure.statusCode).toBe(426);
+
+    const secure = await proxied.inject({
+      method: "GET",
+      url: "/swagger/json",
+      headers: { "x-forwarded-proto": "https" },
+    });
+    expect(secure.statusCode).toBe(200);
+
+    // Health probes stay reachable, or an internal check reads as an outage.
+    const health = await proxied.inject({
+      method: "GET",
+      url: "/health",
+      headers: { "x-forwarded-proto": "http" },
+    });
+    expect(health.statusCode).toBe(200);
+
+    await proxied.close();
+  });
+});

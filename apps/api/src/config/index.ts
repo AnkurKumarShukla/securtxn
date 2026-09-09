@@ -56,6 +56,24 @@ const EnvSchema = z
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
     RATE_LIMIT_WINDOW: z.string().default("1 minute"),
     BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
+
+    /**
+     * How TLS is provided (§5).
+     *
+     *   off        plain HTTP. Local development only; refused in production.
+     *   terminated a load balancer or reverse proxy terminates TLS and forwards
+     *              over the internal network. The app trusts x-forwarded-proto
+     *              and refuses requests that arrived in the clear.
+     *   direct     this process serves HTTPS itself, TLS 1.3 minimum.
+     *
+     * Deliberately explicit rather than inferred from NODE_ENV: "is this
+     * connection encrypted" is not something to guess at.
+     */
+    TLS_MODE: z.enum(["off", "terminated", "direct"]).default("off"),
+    TLS_CERT_PATH: z.string().optional(),
+    TLS_KEY_PATH: z.string().optional(),
+    /** Optional chain to serve alongside the certificate. */
+    TLS_CA_PATH: z.string().optional(),
     ENABLE_DOCS: booleanish.default("true"),
 
     // --- secrets (§5) ---
@@ -105,6 +123,14 @@ const EnvSchema = z
     IDENTITY_PROVIDER: z.enum(["digilocker", "generic", "mock"]).default("mock"),
     VENDOR_MATCHER: z.enum(["fallback", "cre"]).default("fallback"),
     /**
+     * On-chain compliance: "ats" writes real transactions, "mock" does not.
+     *
+     * Defaults to mock so that broadcasting is an explicit opt-in. Inferring it
+     * from the presence of credentials meant every test process picked the real
+     * chain the moment the Hedera keys were filled in.
+     */
+    COMPLIANCE_GATEWAY: z.enum(["ats", "mock"]).default("mock"),
+    /**
      * Minimum name similarity (0-1) that counts as a vendor match. Risk
      * appetite, not a constant — set it lower and more payments reach a human
      * as REVERIFY; set it higher and fewer do (D08).
@@ -149,6 +175,38 @@ const EnvSchema = z
       .optional(),
     /** The deployed security (diamond) address KYC is granted against. */
     ATS_SECURITY_ID: z.string().optional(),
+    /** Hedera account id for the issuer, e.g. "0.0.10443799". */
+    ATS_ISSUER_ACCOUNT_ID: z
+      .string()
+      .regex(/^\d+\.\d+\.\d+$/, "must be a Hedera account id like 0.0.12345")
+      .optional(),
+    /** JSON-RPC relay. Hedera is EVM-compatible through this, not natively. */
+    HEDERA_JSON_RPC_URL: z.string().url().optional(),
+    /**
+     * Published per network by the ATS project; not bundled with the SDK, so
+     * they have to be supplied. `setConfig` needs both before issuance.
+     * Testnet values verified live via the mirror node.
+     */
+    ATS_FACTORY_ADDRESS: z.string().optional(),
+    ATS_RESOLVER_ADDRESS: z.string().optional(),
+    /** Mirror node — read-only queries for account and contract state. */
+    HEDERA_MIRROR_NODE_URL: z.string().url().optional(),
+    /**
+     * Business-logic configuration registered on the resolver:
+     * 0x..01 equity, 0x..02 bond. Passed to Bond.create as `configId`.
+     */
+    ATS_BOND_CONFIG_ID: z.string().optional(),
+    /**
+     * Empty resolves the latest registered version at submit time.
+     *
+     * Preprocessed because `z.coerce.number()` turns "" into 0, which then
+     * fails `.positive()` — so the documented way to say "latest" would break
+     * boot.
+     */
+    ATS_BOND_CONFIG_VERSION: z.preprocess(
+      (v) => (v === "" || v === undefined ? undefined : v),
+      z.coerce.number().int().positive().optional(),
+    ),
 
     // --- DigiLocker (§4.7) ---
     SANDBOX_BASE_URL: z.string().url().default("https://api.sandbox.co.in"),
@@ -188,6 +246,18 @@ const EnvSchema = z
 
     if (env.NODE_ENV === "production" && env.ENABLE_DOCS) {
       fail("ENABLE_DOCS", "must be false in production — docs expose the full API surface");
+    }
+
+    // The bridge holds the only signing key and acts on what this API tells it.
+    // Serving that over plaintext in production would let anyone on the path
+    // choose the recipient a human is asked to confirm.
+    if (env.NODE_ENV === "production" && env.TLS_MODE === "off") {
+      fail("TLS_MODE", "must be 'terminated' or 'direct' in production, never 'off'");
+    }
+
+    if (env.TLS_MODE === "direct") {
+      if (!env.TLS_CERT_PATH) fail("TLS_CERT_PATH", "required when TLS_MODE=direct");
+      if (!env.TLS_KEY_PATH) fail("TLS_KEY_PATH", "required when TLS_MODE=direct");
     }
   });
 

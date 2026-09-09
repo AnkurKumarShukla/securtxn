@@ -7,6 +7,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { loadConfig } from "../src/config/index.js";
+import { issueCredential, type CredentialClaims } from "../src/lib/vc.js";
 
 // Reuse the app's config loader rather than reading process.env directly: it
 // finds the repo-root .env from any cwd and validates it the same way the
@@ -92,6 +93,54 @@ async function main(): Promise<void> {
       status: "DRAFT",
     },
   });
+
+  // The seed writes a CONFIRMED wallet directly rather than walking
+  // callback-confirm, so the credential that step normally mints has to be
+  // created here too — otherwise the seeded state looks confirmed but cannot
+  // be granted KYC on chain (D42).
+  if (config.ATS_ISSUER_PRIVATE_KEY) {
+    const claims: CredentialClaims = {
+      providerUserId: "8ae4e10fc82d9e0d3852c60fc0a15c51",
+      verificationTier: vendor.verificationTier,
+      xmlSignatureVerified: true,
+      crossDocConsistent: true,
+      sameSubjectLinked: true,
+      walletControlProven: true,
+      identityBindingSigned: true,
+      callbackConfirmed: true,
+      addressVerifiedMethod: "ID_DOCUMENT",
+      country: vendor.country,
+      onboardingSessionNonce: vendor.onboardingSessionNonce ?? "",
+    };
+
+    const credentialId = "00000000-0000-4000-8000-0000000000c1";
+    const issued = await issueCredential({
+      credentialId,
+      subjectAddress: wallet.address,
+      claims,
+      issuedAt: new Date("2026-09-08T00:00:00Z"),
+      expiresAt: vendor.aadhaarKycTtl,
+      chainId: config.HEDERA_CHAIN_ID,
+      issuerPrivateKey: config.ATS_ISSUER_PRIVATE_KEY,
+    });
+
+    await prisma.verifiableCredential.upsert({
+      where: { id: credentialId },
+      update: { issuerAddress: issued.issuerAddress, signature: issued.signature },
+      create: {
+        id: credentialId,
+        vendorId: vendor.id,
+        walletId: wallet.id,
+        subjectAddress: wallet.address,
+        claims: issued.claims as object,
+        signature: issued.signature,
+        issuerAddress: issued.issuerAddress,
+        issuedAt: issued.issuedAt,
+        ...(issued.expiresAt ? { expiresAt: issued.expiresAt } : {}),
+      },
+    });
+    console.log(`  credential ${credentialId} issued by ${issued.issuerAddress}`);
+  }
 
   console.log("Seeded:");
   console.log(`  vendor  ${vendor.id}  ${vendor.legalEntityName} (${vendor.verificationTier})`);

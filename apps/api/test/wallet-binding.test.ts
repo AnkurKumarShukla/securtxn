@@ -137,6 +137,53 @@ async function registerWallet(vendorId: string, address: string) {
   return res.json() as { walletId: string; controlProofNonce: string; version: number };
 }
 
+/**
+ * A vendor taken all the way to a signed identity binding.
+ *
+ * Module scope rather than inside one describe: both the binding tests and
+ * the credential tests need it, and duplicating the setup is how two suites
+ * quietly drift apart.
+ */
+async function fullyBoundVendor() {
+  const vendor = await createVendor();
+  await verifyIdentity(vendor.id);
+  const wallet = await registerWallet(vendor.id, PAYEE.address);
+
+  const controlSig = await PAYEE.signTypedData({
+    domain: domainFor(CHAIN_ID),
+    types: WALLET_CONTROL_TYPES,
+    primaryType: "WalletControlProof",
+    message: buildWalletControlMessage({
+      vendorId: vendor.id,
+      walletAddress: PAYEE.address,
+      network: "ethereum",
+      nonce: wallet.controlProofNonce,
+    }),
+  });
+  await app.inject({
+    method: "POST",
+    url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/control-proof`,
+    headers: auth(),
+    payload: { signature: controlSig },
+  });
+
+  const row = await prisma.vendor.findUniqueOrThrow({ where: { id: vendor.id } });
+  const bindingSig = await PAYEE.signTypedData({
+    domain: domainFor(CHAIN_ID),
+    types: IDENTITY_BINDING_TYPES,
+    primaryType: "IdentityBinding",
+    message: buildIdentityBindingMessage({
+      onboardingSessionNonce: row.onboardingSessionNonce!,
+      digilockerUserId: row.digilockerUserId!,
+      walletAddress: PAYEE.address,
+      aadhaarDocHash: row.aadhaarDocHash!,
+      panDocHash: row.panDocHash!,
+    }),
+  });
+
+  return { vendor, wallet, row, bindingSig };
+}
+
 describe("vendor creation issues the onboarding nonce (D03)", () => {
   it("returns a server-generated 32-byte nonce", async () => {
     const { nonce } = await createVendor();
@@ -260,45 +307,7 @@ describe("wallet control proof", () => {
 });
 
 describe.skipIf(!hasRealFixtures)("identity binding and confirmation", () => {
-  async function fullyBoundVendor() {
-    const vendor = await createVendor();
-    await verifyIdentity(vendor.id);
-    const wallet = await registerWallet(vendor.id, PAYEE.address);
 
-    const controlSig = await PAYEE.signTypedData({
-      domain: domainFor(CHAIN_ID),
-      types: WALLET_CONTROL_TYPES,
-      primaryType: "WalletControlProof",
-      message: buildWalletControlMessage({
-        vendorId: vendor.id,
-        walletAddress: PAYEE.address,
-        network: "ethereum",
-        nonce: wallet.controlProofNonce,
-      }),
-    });
-    await app.inject({
-      method: "POST",
-      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/control-proof`,
-      headers: auth(),
-      payload: { signature: controlSig },
-    });
-
-    const row = await prisma.vendor.findUniqueOrThrow({ where: { id: vendor.id } });
-    const bindingSig = await PAYEE.signTypedData({
-      domain: domainFor(CHAIN_ID),
-      types: IDENTITY_BINDING_TYPES,
-      primaryType: "IdentityBinding",
-      message: buildIdentityBindingMessage({
-        onboardingSessionNonce: row.onboardingSessionNonce!,
-        digilockerUserId: row.digilockerUserId!,
-        walletAddress: PAYEE.address,
-        aadhaarDocHash: row.aadhaarDocHash!,
-        panDocHash: row.panDocHash!,
-      }),
-    });
-
-    return { vendor, wallet, row, bindingSig };
-  }
 
   it("accepts an attestation over the nonce, identity and document hashes", async () => {
     const { vendor, wallet, bindingSig } = await fullyBoundVendor();
@@ -516,5 +525,211 @@ describe("wallet versioning (D01)", () => {
       payload: { signature: `0x${"11".repeat(65)}` },
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe.skipIf(!hasRealFixtures)("credential minted at confirmation (D42)", () => {
+  it("issues a credential the moment the wallet reaches CONFIRMED", async () => {
+    const { vendor, wallet, bindingSig } = await fullyBoundVendor();
+    await app.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/identity-binding`,
+      headers: auth(),
+      payload: { signature: bindingSig },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/callback-confirm`,
+      headers: auth(),
+      payload: { confirmedBy: "operator-1", channelUsed: "9793953201" },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/credential`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+
+    const credential = res.json();
+    expect(credential.subjectAddress.toLowerCase()).toBe(PAYEE.address.toLowerCase());
+    expect(credential.usable).toBe(true);
+    // Not granted yet — the on-chain call has not happened.
+    expect(credential.grantedTxHash).toBeNull();
+
+    // Every gate is recorded, so the grant is backed by real verification
+    // rather than an allowlist entry.
+    expect(credential.claims).toMatchObject({
+      xmlSignatureVerified: true,
+      crossDocConsistent: true,
+      sameSubjectLinked: true,
+      walletControlProven: true,
+      identityBindingSigned: true,
+      callbackConfirmed: true,
+      verificationTier: "TIER3_ADDRESS",
+    });
+  });
+
+  it("sets the on-chain validity window from the identity TTL", async () => {
+    // Verification is time-bounded, so the grant expires by itself (D06).
+    const credential = await prisma.verifiableCredential.findFirstOrThrow({
+      where: { vendorId: { in: vendorIds } },
+      orderBy: { issuedAt: "desc" },
+    });
+    const vendor = await prisma.vendor.findUniqueOrThrow({ where: { id: credential.vendorId } });
+    expect(credential.expiresAt?.getTime()).toBe(vendor.aadhaarKycTtl?.getTime());
+  });
+
+  it("stores no PII in the persisted claims", async () => {
+    const credential = await prisma.verifiableCredential.findFirstOrThrow({
+      where: { vendorId: { in: vendorIds } },
+      orderBy: { issuedAt: "desc" },
+    });
+    const serialised = JSON.stringify(credential.claims).toLowerCase();
+    for (const forbidden of ["ankur", "shukla", "7632", "9793953201"]) {
+      expect(serialised, `claims leaked '${forbidden}'`).not.toContain(forbidden);
+    }
+  });
+
+  it("404s for a wallet that was never confirmed", async () => {
+    const vendor = await createVendor();
+    const wallet = await registerWallet(vendor.id, PAYEE.address);
+    const res = await app.inject({
+      method: "GET",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/credential`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe.skipIf(!hasRealFixtures)("on-chain KYC grant (D40)", () => {
+  /** A confirmed wallet with a credential, ready to grant. */
+  async function grantable() {
+    const { vendor, wallet, bindingSig } = await fullyBoundVendor();
+    await app.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/identity-binding`,
+      headers: auth(),
+      payload: { signature: bindingSig },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/callback-confirm`,
+      headers: auth(),
+      payload: { confirmedBy: "operator-1", channelUsed: "9793953201" },
+    });
+    return { vendor, wallet };
+  }
+
+  const grant = (vendorId: string, walletId: string) =>
+    app.inject({
+      method: "POST",
+      url: `/vendors/${vendorId}/wallets/${walletId}/grant-kyc`,
+      headers: auth(),
+    });
+
+  it("refuses to grant for a wallet that was never confirmed", async () => {
+    // The on-chain grant asserts the platform verified this payee. A wallet
+    // that never cleared the three gates has nothing to assert.
+    const vendor = await createVendor();
+    const wallet = await registerWallet(vendor.id, PAYEE.address);
+    const res = await grant(vendor.id, wallet.walletId);
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.message).toMatch(/only a CONFIRMED wallet/i);
+  });
+
+  it("refuses when no security has been issued yet", async () => {
+    // Built without ATS_SECURITY_ID rather than relying on the ambient
+    // environment: once a real security was deployed, an env-dependent test
+    // started reaching the live chain.
+    const { ATS_SECURITY_ID: _omitted, ...withoutSecurity } = base;
+    const app2 = await buildServer({
+      ...withoutSecurity,
+      NODE_ENV: "test",
+      isProduction: false,
+      RATE_LIMIT_MAX: 1_000_000,
+      IDENTITY_PROVIDER: "mock",
+      DIGILOCKER_FIXTURE_DIR: REAL_FIXTURES,
+      COMPLIANCE_GATEWAY: "mock",
+    });
+    await app2.ready();
+    const token = await app2.signToken("agent", "no-security-test");
+
+    const { vendor, wallet } = await grantable();
+    const res = await app2.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/grant-kyc`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.message).toMatch(/ATS_SECURITY_ID/);
+    await app2.close();
+  });
+
+  it("refuses to grant an expired credential", async () => {
+    // Putting a stale assertion on chain with an already-passed validity window
+    // is worse than not granting at all (D06).
+    const { vendor, wallet } = await grantable();
+    await prisma.verifiableCredential.update({
+      where: { walletId: wallet.walletId },
+      data: { expiresAt: new Date("2020-01-01T00:00:00.000Z") },
+    });
+
+    const withSecurity = await buildServer({
+      ...base,
+      NODE_ENV: "test",
+      isProduction: false,
+      RATE_LIMIT_MAX: 1_000_000,
+      IDENTITY_PROVIDER: "mock",
+      DIGILOCKER_FIXTURE_DIR: REAL_FIXTURES,
+      ATS_SECURITY_ID: "0.0.9213391",
+      // Never the real chain from a test.
+      COMPLIANCE_GATEWAY: "mock",
+    });
+    await withSecurity.ready();
+    const token = await withSecurity.signToken("agent", "grant-test");
+
+    const res = await withSecurity.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/grant-kyc`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.message).toMatch(/expired or revoked/i);
+    await withSecurity.close();
+  });
+
+  it("refuses when the credential issuer is not the configured on-chain key", async () => {
+    // The chain records `issuer` as an address. If it does not match the key
+    // that signed the credential, a verifier cannot connect the two.
+    const { vendor, wallet } = await grantable();
+    await prisma.verifiableCredential.update({
+      where: { walletId: wallet.walletId },
+      data: { issuerAddress: "0x000000000000000000000000000000000000dEaD" },
+    });
+
+    const withSecurity = await buildServer({
+      ...base,
+      NODE_ENV: "test",
+      isProduction: false,
+      RATE_LIMIT_MAX: 1_000_000,
+      IDENTITY_PROVIDER: "mock",
+      DIGILOCKER_FIXTURE_DIR: REAL_FIXTURES,
+      ATS_SECURITY_ID: "0.0.9213391",
+      // Never the real chain from a test.
+      COMPLIANCE_GATEWAY: "mock",
+    });
+    await withSecurity.ready();
+    const token = await withSecurity.signToken("agent", "grant-test");
+
+    const res = await withSecurity.inject({
+      method: "POST",
+      url: `/vendors/${vendor.id}/wallets/${wallet.walletId}/grant-kyc`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.message).toMatch(/issuer does not match/i);
+    await withSecurity.close();
   });
 });

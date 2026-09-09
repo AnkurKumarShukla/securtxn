@@ -157,3 +157,60 @@ export async function verifyIdentityBinding(input: {
 function withPrefix(hash: string): Hex {
   return (hash.startsWith("0x") ? hash : `0x${hash}`) as Hex;
 }
+
+// --- recipient acknowledgment ----------------------------------------------
+
+/**
+ * Non-repudiation of receipt.
+ *
+ * The payee signs a commitment over the payment context, so they cannot later
+ * claim the money never arrived. This is the same property the HTLC settlement
+ * leg would provide automatically by requiring a preimage reveal (D41) — this
+ * is the manual path, and both verify with the code below.
+ */
+export const ACK_TYPES = {
+  RecipientAcknowledgment: [
+    { name: "paymentRequestId", type: "string" },
+    { name: "recipientAddress", type: "address" },
+    { name: "commitment", type: "bytes32" },
+    { name: "statement", type: "string" },
+  ],
+} as const;
+
+export const ACK_STATEMENT = "I acknowledge receipt of this payment.";
+
+export type AcknowledgmentMessage = {
+  paymentRequestId: string;
+  recipientAddress: Address;
+  commitment: Hex;
+  statement: string;
+};
+
+export function buildAcknowledgmentMessage(input: {
+  paymentRequestId: string;
+  recipientAddress: string;
+  commitment: string;
+}): AcknowledgmentMessage {
+  return {
+    paymentRequestId: input.paymentRequestId,
+    recipientAddress: input.recipientAddress as Address,
+    commitment: input.commitment as Hex,
+    statement: ACK_STATEMENT,
+  };
+}
+
+export async function verifyAcknowledgment(input: {
+  chainId: number;
+  address: string;
+  signature: string;
+  message: AcknowledgmentMessage;
+}): Promise<boolean> {
+  return verifyTypedData({
+    address: input.address as Address,
+    domain: domainFor(input.chainId),
+    types: ACK_TYPES,
+    primaryType: "RecipientAcknowledgment",
+    message: input.message,
+    signature: input.signature as Hex,
+  });
+}

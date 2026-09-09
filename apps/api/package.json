@@ -18,7 +18,8 @@
     "db:studio": "dotenv -e ../../.env -- prisma studio",
     "cre:e2e": "dotenv -e ../../.env -- tsx scripts/cre-e2e.ts",
     "cre:request": "dotenv -e ../../.env -- node scripts/new-match-request.mjs",
-    "cre:show": "dotenv -e ../../.env -- node scripts/show-match-request.mjs"
+    "cre:show": "dotenv -e ../../.env -- node scripts/show-match-request.mjs",
+    "cert:dev": "bash scripts/generate-dev-cert.sh"
   },
   "//": "Dependencies are added when the phase that uses them starts (docs/progress.md). viem, xml-crypto, @xmldom/xmldom and @hashgraph/sdk arrive with A3/A4 and Track B.",
   "dependencies": {
@@ -38,7 +39,8 @@
     "xml-crypto": "^6.1.2",
     "zod": "^3.24.1",
     "@cp/cre-workflows": "workspace:*",
-    "@worldcoin/idkit-core": "^4.2.4"
+    "@worldcoin/idkit-core": "^4.2.4",
+    "@cp/contracts": "workspace:*"
   },
   "devDependencies": {
     "dotenv-cli": "^7.4.4",

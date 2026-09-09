@@ -4,6 +4,7 @@
 import {
   CallbackConfirmRequest,
   ControlProofRequest,
+  CredentialResponse,
   RegisterWalletRequest,
   RegisterWalletResponse,
   Uuid,
@@ -17,7 +18,11 @@ const VendorParams = z.object({ id: Uuid });
 const WalletParams = z.object({ id: Uuid, walletId: Uuid });
 
 export const walletRoutes: FastifyPluginAsyncZod = async (app) => {
-  const service = new WalletService({ prisma: app.prisma, config: app.config });
+  const service = new WalletService({
+    prisma: app.prisma,
+    config: app.config,
+    compliance: app.container.complianceGateway,
+  });
 
   app.post(
     "/vendors/:id/wallets",
@@ -119,5 +124,51 @@ export const walletRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (request) =>
       service.confirmCallback(request.params.id, request.params.walletId, request.body),
+  );
+
+  app.get(
+    "/vendors/:id/wallets/:walletId/credential",
+    {
+      preHandler: app.requireRole("agent"),
+      schema: {
+        tags: ["vendors"],
+        summary: "The verifiable credential minted at confirmation",
+        description:
+          "Referenced on-chain by grantKyc(account, vcId, validFrom, validTo, issuer). " +
+          "Safe to disclose in full — it asserts THAT checks passed, never the documents " +
+          "behind them.",
+        security: [{ bearerAuth: [] }],
+        params: WalletParams,
+        response: { 200: CredentialResponse },
+      },
+    },
+    async (request) => service.getCredential(request.params.id, request.params.walletId),
+  );
+
+  app.post(
+    "/vendors/:id/wallets/:walletId/grant-kyc",
+    {
+      preHandler: app.requireRole("agent"),
+      schema: {
+        tags: ["vendors"],
+        summary: "Grant KYC on the ATS security for this wallet",
+        description:
+          "Submits grantKyc(account, vcId, validFrom, validTo, issuer) so the token " +
+          "itself accepts transfers to this address. Separate from callback-confirm and " +
+          "retryable: onboarding must not depend on a chain being reachable.",
+        security: [{ bearerAuth: [] }],
+        params: WalletParams,
+        response: {
+          200: z.object({
+            txHash: z.string(),
+            /** False when the mock gateway is active — nothing was broadcast. */
+            broadcast: z.boolean(),
+            credentialId: z.string(),
+            securityId: z.string(),
+          }),
+        },
+      },
+    },
+    async (request) => service.grantOnChainKyc(request.params.id, request.params.walletId),
   );
 };

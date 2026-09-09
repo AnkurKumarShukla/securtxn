@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient, type Vendor, type VendorWallet } from "@prisma/client";
 import type {
   CallbackConfirmRequest,
+  CredentialResponse,
   RegisterWalletRequest,
   RegisterWalletResponse,
   WalletSummary,
@@ -30,10 +31,17 @@ import {
   verifyWalletControl,
 } from "../../lib/eip712.js";
 import { checkCallbackChannel } from "./callback-guard.js";
-import { issueCredential, type CredentialClaims } from "../../lib/vc.js";
+import type { ComplianceGateway } from "@cp/contracts";
+import { issueCredential, isUsable, type CredentialClaims } from "../../lib/vc.js";
 
 export class WalletService {
-  constructor(private readonly deps: { prisma: PrismaClient; config: Config }) {}
+  constructor(
+    private readonly deps: {
+      prisma: PrismaClient;
+      config: Config;
+      compliance: ComplianceGateway;
+    },
+  ) {}
 
   /**
    * Registers a new wallet version.
@@ -304,6 +312,115 @@ export class WalletService {
         ...(issued.expiresAt ? { expiresAt: issued.expiresAt } : {}),
       },
     });
+  }
+
+  /**
+   * The credential minted at confirmation.
+   *
+   * Returned in full because it is safe to disclose in full: every claim is a
+   * boolean, an enum, or an opaque identifier, and the chain will reference it
+   * publicly anyway (D42).
+   */
+  async getCredential(vendorId: string, walletId: string): Promise<CredentialResponse> {
+    await this.requirePair(vendorId, walletId);
+
+    const credential = await this.deps.prisma.verifiableCredential.findUnique({
+      where: { walletId },
+    });
+    if (!credential) {
+      throw new NotFoundError(`Credential for wallet '${walletId}'`);
+    }
+
+    return {
+      credentialId: credential.id,
+      subjectAddress: credential.subjectAddress as CredentialResponse["subjectAddress"],
+      claims: credential.claims as unknown as CredentialResponse["claims"],
+      signature: credential.signature,
+      issuerAddress: credential.issuerAddress as CredentialResponse["issuerAddress"],
+      issuedAt: credential.issuedAt.toISOString(),
+      expiresAt: credential.expiresAt?.toISOString() ?? null,
+      revokedAt: credential.revokedAt?.toISOString() ?? null,
+      grantedTxHash: credential.grantedTxHash,
+      // Computed, never stored: a cached "usable" flag goes stale the moment
+      // the expiry passes, and this gates an on-chain grant.
+      usable: isUsable(credential),
+    };
+  }
+
+  /**
+   * Grants KYC on the ATS security, so the token itself will accept transfers
+   * to this wallet.
+   *
+   * A SEPARATE, RETRYABLE step rather than part of callback-confirm. Vendor
+   * onboarding must not depend on a chain being reachable: an RPC outage or a
+   * security that has not been issued yet would otherwise block a verification
+   * that is complete and correct off-chain.
+   */
+  async grantOnChainKyc(vendorId: string, walletId: string): Promise<{
+    txHash: string;
+    broadcast: boolean;
+    credentialId: string;
+    securityId: string;
+  }> {
+    const { wallet } = await this.requirePair(vendorId, walletId);
+
+    if (wallet.status !== "CONFIRMED") {
+      throw new UnprocessableError(
+        `Wallet is '${wallet.status}'; only a CONFIRMED wallet may be granted KYC`,
+      );
+    }
+
+    const securityId = this.deps.config.ATS_SECURITY_ID;
+    if (!securityId) {
+      throw new UnprocessableError(
+        "ATS_SECURITY_ID is not set; issue a security before granting KYC against it",
+      );
+    }
+
+    const credential = await this.deps.prisma.verifiableCredential.findUnique({
+      where: { walletId },
+    });
+    if (!credential) {
+      throw new NotFoundError(`Credential for wallet '${walletId}'`);
+    }
+    // The platform's own gate, checked before asking the chain: granting an
+    // expired or revoked credential would put a stale assertion on chain with
+    // a validity window that has already passed.
+    if (!isUsable(credential)) {
+      throw new UnprocessableError("Credential is expired or revoked; re-verify before granting");
+    }
+    if (credential.grantedTxHash) {
+      throw new ConflictError("KYC has already been granted for this wallet");
+    }
+
+    // The issuer recorded on chain must be the key that signed the credential,
+    // or a verifier cannot connect the two.
+    const gatewayIssuer = this.deps.compliance.issuerAddress().toLowerCase();
+    if (credential.issuerAddress.toLowerCase() !== gatewayIssuer) {
+      throw new UnprocessableError(
+        "Credential issuer does not match the configured on-chain issuer key",
+      );
+    }
+
+    const result = await this.deps.compliance.grantKyc({
+      securityId,
+      account: wallet.address,
+      vcId: credential.id,
+      validFrom: credential.issuedAt,
+      validTo: credential.expiresAt,
+    });
+
+    await this.deps.prisma.verifiableCredential.update({
+      where: { id: credential.id },
+      data: { grantedTxHash: result.txHash },
+    });
+
+    return {
+      txHash: result.txHash,
+      broadcast: result.broadcast,
+      credentialId: credential.id,
+      securityId,
+    };
   }
 
   async list(vendorId: string): Promise<WalletSummary[]> {

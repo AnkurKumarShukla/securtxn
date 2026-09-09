@@ -16,13 +16,14 @@
   "dependencies": {
     "@cp/shared-types": "workspace:*",
     "commander": "^12.1.0",
+    "undici": "^8.10.2",
     "viem": "^2.21.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/node": "^20.14.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "@types/node": "^20.14.0"
+    "vitest": "^2.1.8"
   }
 }

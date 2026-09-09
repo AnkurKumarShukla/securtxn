@@ -21,12 +21,14 @@ import {
 import { loadConfig, type Config } from "./config/index.js";
 import containerPlugin from "./container.js";
 import { buildLoggerOptions } from "./lib/logger.js";
+import httpsEnforcementPlugin, { tlsServerOptions } from "./lib/tls.js";
 import { devRoutes } from "./modules/dev/routes.js";
 import { identityRoutes } from "./modules/identity/routes.js";
 import { vendorRoutes } from "./modules/vendors/routes.js";
 import { walletRoutes } from "./modules/wallets/routes.js";
 import { paymentRoutes } from "./modules/payments/routes.js";
 import { evidenceRoutes } from "./modules/evidence/routes.js";
+import { exceptionRoutes } from "./modules/exceptions/routes.js";
 import { approvalRoutes } from "./modules/approvals/routes.js";
 import { identityRegistryRoutes } from "./modules/internal/identity-registry.routes.js";
 import { vendorLookupRoutes } from "./modules/internal/vendor-lookup.routes.js";
@@ -39,15 +41,18 @@ import prismaPlugin from "./plugins/prisma.js";
 import swaggerPlugin from "./plugins/swagger.js";
 
 export async function buildServer(config: Config = loadConfig()): Promise<FastifyInstance> {
+  const tls = tlsServerOptions(config);
+
   const app = Fastify({
     logger: buildLoggerOptions(config),
+    ...(tls.https ? { https: tls.https } : {}),
     // Correlates every log line and error body with one request.
     genReqId: (req) => (req.headers["x-request-id"] as string | undefined) ?? randomUUID(),
     requestIdHeader: "x-request-id",
     bodyLimit: config.BODY_LIMIT_BYTES,
-    // Only enable behind a proxy that actually sets X-Forwarded-For, otherwise
-    // a client can spoof its own IP and defeat rate limiting.
-    trustProxy: config.isProduction,
+    // Only when a proxy is actually in front (TLS_MODE=terminated). Otherwise a
+    // client could set its own X-Forwarded-For and defeat rate limiting.
+    trustProxy: tls.trustProxy,
   }).withTypeProvider<ZodTypeProvider>();
 
   // Zod both validates requests and generates the OpenAPI schema, so the docs
@@ -56,8 +61,13 @@ export async function buildServer(config: Config = loadConfig()): Promise<Fastif
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(configPlugin, { config });
+  await app.register(httpsEnforcementPlugin);
 
   await app.register(fastifyHelmet, {
+    // HSTS only where the connection is actually encrypted. Sending it over
+    // plain HTTP in local development would pin a browser to https://localhost
+    // and break every other project on that origin.
+    hsts: config.TLS_MODE !== "off",
     // The API serves JSON; the only HTML it returns is the Swagger UI page,
     // which needs inline styles and scripts to render.
     contentSecurityPolicy: {
@@ -109,13 +119,12 @@ export async function buildServer(config: Config = loadConfig()): Promise<Fastif
   await app.register(identityRoutes);
   await app.register(paymentRoutes);
   await app.register(evidenceRoutes);
+  await app.register(exceptionRoutes);
   await app.register(approvalRoutes);
   await app.register(identityRegistryRoutes);
   await app.register(vendorLookupRoutes);
   await app.register(vendorMatchResultRoutes);
 
-  // --- module routes are registered here as they are built (docs/progress.md)
-  // await app.register(exceptionRoutes);  // A10
 
   // Deliberately not calling app.ready() here: listen() readies it, and leaving
   // it unready keeps buildServer usable in tests that register a route first.
