@@ -485,3 +485,68 @@ enum VendorMatchRequestStatus {
   COMPLETED
   FAILED
 }
+
+/// One World ID proof we accepted (B4, §4.6, D49/D49a).
+///
+/// The nullifier is an RP- and action-scoped identifier that is STABLE PER
+/// PERSON: the same human verifying the same action returns the same value
+/// forever. Verified twice against the live sandbox — fresh nonce, fresh proof,
+/// different merkle root, identical nullifier (D49a). That stability is what
+/// lets onboarding record a value and a later gate compare against it, without
+/// us ever holding a face.
+model WorldIdVerification {
+  id String @id @default(uuid())
+
+  /// DECIMAL, NOT HEX, and this is not a style preference (D49a).
+  ///
+  /// These are 256-bit field elements rendered as UNPADDED hex: an observed
+  /// merkle_root came back 63 chars in one run and 64 in the next, a leading
+  /// zero silently dropped. The nullifier is the same kind of value and will be
+  /// short roughly one time in sixteen. Stored as text, one person would yield
+  /// both "0x0abc…" and "0xabc…" — continuity comparisons would fail for a
+  /// legitimate user, and the unique index below would not catch the replay it
+  /// exists to catch. Converting to decimal collapses both spellings to one.
+  nullifier Decimal @db.Decimal(78, 0)
+
+  /// Scope of the nullifier. Changing this string changes the nullifier for the
+  /// same human, so it must stay constant across enrollment and every later
+  /// check or continuity breaks silently (D49).
+  action String
+
+  /// What the proof was bound to — the proposal, wallet or onboarding session.
+  /// Part of the uniqueness key so one person may verify many times for
+  /// DIFFERENT things but never twice for the same one.
+  signal String
+
+  /// "selfie" for Selfie Check, "proof_of_human" for Orb, etc. Recorded because
+  /// assurance differs per credential and a reader must not have to guess.
+  credential  String
+  environment String
+
+  /// Opaque handle for whoever this verification belongs to — a vendor id, an
+  /// approver subject. Deliberately a plain string: this table must not force a
+  /// foreign key onto every future subject type.
+  subject String
+  purpose WorldIdPurpose
+
+  /// OUR clock. The upstream `created_at` is when the nullifier was FIRST EVER
+  /// seen, not when this proof was verified — both runs in D49a returned an
+  /// identical timestamp hours apart. Persisting upstream's value would put a
+  /// wrong time in the evidence chain.
+  verifiedAt DateTime @default(now())
+
+  /// True when the World verifier flagged the nullifier as previously seen.
+  /// DIAGNOSTIC ONLY — it still returns success:true on reuse, so this is never
+  /// the control. The unique index is (D49a).
+  upstreamReuse Boolean @default(false)
+
+  @@unique([nullifier, action, signal])
+  @@index([subject, purpose, verifiedAt])
+}
+
+enum WorldIdPurpose {
+  /// Recorded at onboarding. The value every later check is compared against.
+  ENROLLMENT
+  /// Any later proof of "still the same human".
+  REVERIFICATION
+}

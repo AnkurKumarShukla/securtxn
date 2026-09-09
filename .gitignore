@@ -26,6 +26,14 @@ sbox_test_key.csv
 *credentials.json
 *token.json
 
+# MCP server config. Normally shareable, but ours carry Authorization headers
+# with live API keys (World ID Developer Portal), so a project-scoped .mcp.json
+# is a credential file. Servers are added at LOCAL scope (~/.claude.json,
+# outside the repo); this is the belt-and-braces in case one is ever added
+# with --scope project.
+.mcp.json
+.claude/hooks.json
+
 # =========================================================================
 # REAL PII (Aadhaar / PAN extracts) — never commit
 # =========================================================================

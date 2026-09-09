@@ -1,0 +1,34 @@
+{
+  "_capture": "First Selfie Check verification. Sandbox, action verify-payment-approver, empty signal.",
+  "idkit": {
+    "action": "verify-payment-approver",
+    "environment": "sandbox",
+    "nonce": "0x00aefa2342693d69f221f9145d9316580bedc378b8ed16ac5c5401c243ce3259",
+    "protocol_version": "3.0",
+    "responses": [
+      {
+        "identifier": "selfie",
+        "merkle_root": "0x1a7f791cb52e057e5577b006b43addf8bf7a7833e8e4757f0a867fc029a50f4",
+        "nullifier": "0x17a81bf183a7751d6c748f352456153a3b3977da144d2613dd68820524524436",
+        "proof": "0x22f1b9d4d16b392729532fa74b5ec295847c09955677743d91d2f9295c938fd71f8015350ed9b173613f8431c23d364231b04fc39249d4b0641171d705cc67b118f96cb6d23b20f4f496861c66f74e052c36340f3faa4f1c5db03881addc0a201ee5d3e7f4e3d6ac23eee3974b3e23ec2d86f2c2f1950145a25f11bf581924681b015aa66ae92614faedc83986c391e0d787658513cbdf8c5b9cd18cb31abdd52fd72f6f580de3305d2cba430908d180227f0490f1669aeffba42ba0261f04ca2f912c46a2527f1a3eefdb362c765fe13d8b711cbb2878b8ab458fa3423923691f9f8c78e02fd315e4cd6fdfbf421f56239451a859e985c7136f4aa08de44445",
+        "signal_hash": "0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4"
+      }
+    ]
+  },
+  "upstream": {
+    "success": true,
+    "action": "verify-payment-approver",
+    "nullifier": "0x17a81bf183a7751d6c748f352456153a3b3977da144d2613dd68820524524436",
+    "created_at": "2026-09-09T22:15:54.351489+00:00",
+    "environment": "sandbox",
+    "protocol_version": "3.0",
+    "results": [
+      {
+        "identifier": "selfie",
+        "success": true,
+        "nullifier": "0x17a81bf183a7751d6c748f352456153a3b3977da144d2613dd68820524524436"
+      }
+    ],
+    "message": "Proof verified successfully"
+  }
+}

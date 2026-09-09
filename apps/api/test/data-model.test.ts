@@ -65,6 +65,9 @@ describe("enum parity with schema.prisma", () => {
     // boundary: the callback endpoint answers RECORDED/ALREADY_RECORDED, and
     // callers of the matcher get a verdict or an exception — never this.
     "VendorMatchRequestStatus",
+    // Enrollment vs re-verification of a World ID proof (D49). Internal to the
+    // verification module; callers get a verdict or an exception, never this.
+    "WorldIdPurpose",
   ]);
 
   it("finds every enum in the schema and accounts for each one", () => {

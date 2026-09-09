@@ -303,12 +303,28 @@ partner on `main` turns a working demo into a broken one. → D20
 - [ ] Clear Signing prompt shows correct recipient + amount on device
 - [ ] Real send produces a real `txHash`; `PaymentRequest` → `SENT`
 
-### B4 · World ID — Selfie Check — *DEMOTED below B1; keep the stub* → D39
+### B4 · World ID — Selfie Check — **UNBLOCKED: access confirmed by running it** → D49
 
-- [ ] IDKit widget wired on the approval screen (QR desktop / deep link mobile)
-- [ ] Server-side verification against World's endpoint — confirm response shape, do not guess field names
+- [x] **Selfie Check access CONFIRMED** — not readable from the Portal API (no feature-flag field exists); proven by requesting the credential and getting `identifier: "selfie"`, `success: true`, `"Proof verified successfully"` back
+- [x] Portal resources: app `app_e44f3e7a022dc3b7e807acaa0efaceaa`, RP `rp_a76c7d95ea331d5a` (registered prod + staging), action `verify-payment-approver` (both environments)
+- [x] RP signing key rotated (the previous one was unrecoverable — the portal only ever returns the address) and stored server-only in `.env`
+- [x] IDKit upgraded **2.4.2 → 4.2.3** — v2 has no `selfieCheckLegacy` and no `IDKitRequestWidget`; every API verified against the installed `.d.ts`, not docs prose
+- [x] **Standalone test surface live** — `apps/web/src/app/world-id-test`, `environment: "sandbox"`, `preset: selfieCheckLegacy()`, `allow_legacy_proofs: true`. Prints the active preset/environment on screen so a reviewer can confirm the request without reading source
+- [x] Server-side signing (`/api/world-id/rp-signature`) and verification (`/api/world-id/verify`, forwards the payload **as-is**). Confirmed by grepping the served HTML that the signing key never reaches the client bundle
+- [x] Full round trip verified end to end: sandbox World ID app → camera selfie → proof → server verification success
+- [x] **Continuity proven by a second live run** — same person, same action, fresh nonce/proof/merkle_root, **identical nullifier**. This is what makes "same human as at onboarding" possible without us holding a photo (D49a)
+- [x] **Module built and tested — `apps/api/src/modules/worldid/` (21 tests)**
+  - [x] `WorldIdVerification` table; nullifier as `Decimal(78,0)`, `UNIQUE (nullifier, action, signal)` — deliberately **not** the documented `UNIQUE (nullifier, action)`, which would let each human approve exactly one payment ever (D49)
+  - [x] Nullifier normalised hex → decimal. Field elements come back **unpadded** — an observed `merkle_root` was 63 chars in one run and 64 in the next — so stored as text one person would be two (D49a)
+  - [x] **Signal binding enforced** — the v4 verifier is never told which signal we expected, so `signal_hash` is compared against `hashSignal(expected)` before storing. Without it a valid proof bound to anything would authorise this payment (D49b)
+  - [x] Replay rejected by our unique index, proven against the **real second capture** that World itself approved with `success: true` + "(nullifier reuse)"
+  - [x] Continuity: enrollment recorded, later proofs compared; a different human rejected, a missing enrollment **fails closed**
+  - [x] Our clock stored, not upstream `created_at` (which is first-seen, not verified-at — D49a)
+  - [x] RLS enabled on the new table via migration, re-verified with the browser-shipped key
+- [x] Both live captures saved as replayable fixtures + oracle — `fixtures/worldid/` (committed: nullifiers are one-way and RP-scoped, no identity data)
+- [ ] Wire into the approval screen; widget success required before the proposal is written
 - [ ] `selfieCheckProofRef` stored opaque; proof never stored raw
-- [ ] Widget success required before the proposal is written
+- [ ] Decide where the gate sits (approver vs payee) and which tiers require it
 
 ### B5 · Chainlink CRE — *DEMOTED below B1; fallback already tells the story* → D39
 

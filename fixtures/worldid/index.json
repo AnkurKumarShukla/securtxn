@@ -1,0 +1,35 @@
+{
+  "description": "Recorded World ID Selfie Check responses from the live sandbox, captured 2026-09-09. Replayed offline so tests never depend on a phone, a camera, or the World verifier being reachable.",
+  "app_id": "app_e44f3e7a022dc3b7e807acaa0efaceaa",
+  "rp_id": "rp_a76c7d95ea331d5a",
+  "action": "verify-payment-approver",
+  "environment": "sandbox",
+  "captures": [
+    {
+      "file": "01_selfie_check_first.json",
+      "note": "First verification. Upstream message has no reuse annotation."
+    },
+    {
+      "file": "02_selfie_check_reuse.json",
+      "note": "Same person, same action, fresh proof. Identical nullifier; upstream annotates '(nullifier reuse)' and STILL returns success:true."
+    }
+  ],
+  "expected_check_results": {
+    "note": "What a correct implementation must conclude when replaying the two captures above.",
+    "credential": "selfie",
+    "protocol_version": "3.0",
+    "nullifier_hex": "0x17a81bf183a7751d6c748f352456153a3b3977da144d2613dd68820524524436",
+    "nullifier_decimal": "10700218682661203848778497823027747344712786704929324413191575768718929708086",
+    "signal_hash_for_empty_signal": "0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4",
+    "nullifier_is_stable_across_runs": true,
+    "upstream_returns_success_on_reuse": true,
+    "upstream_created_at_is_first_seen_not_verified_at": true
+  },
+  "known_gotchas": [
+    "Field elements are UNPADDED hex: merkle_root came back 63 chars in capture 01 and 64 in capture 02. Nullifiers have the same property, so store them as NUMERIC(78,0) decimal, never as text.",
+    "The verifier returns success:true on a reused nullifier and only annotates the message string. Replay protection is entirely the integrator's — the unique index is the control.",
+    "upstream created_at is identical in both captures despite hours between them: it is when the nullifier was FIRST seen, not when this proof was verified. Use your own clock.",
+    "signal_hash here is the hash of the EMPTY signal, which is also the documented default. The v4 verify endpoint is never told which signal you expected, so comparing signal_hash against hashSignal(yourSignal) is your job.",
+    "Legacy presets return the user's MAXIMUM credential: requesting selfieCheckLegacy can return an Orb credential, so identifier is not guaranteed to be 'selfie'."
+  ]
+}

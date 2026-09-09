@@ -867,3 +867,146 @@ suite would otherwise drive 200+ tests through the live gateway and the ngrok
 tunnel. The swap is a one-word change and is proven by `pnpm --filter @cp/api
 cre:e2e`; the deployment remains pinned to the tunnel URL, and the Vault secret
 is still a ~12h agent JWT.
+
+### D49 · Selfie Check is enabled — proven by running it, not by reading the portal — `build`
+
+The Developer Portal MCP exposes no feature-flag field: `get_app_config` returns
+registration status, store metadata and actions, and nothing about which
+credentials an app may request. The docs are explicit that "a valid app or
+action does not imply Selfie Check access", so the config told us nothing either
+way. The only conclusive test was to request the credential and read what came
+back.
+
+It came back enabled:
+
+```
+"identifier": "selfie"          — not "orb", not "proof_of_human"
+"success": true
+"message": "Proof verified successfully"
+```
+
+`protocol_version: "3.0"` is correct, not a fallback: Selfie Check is backed by a
+World ID 3.0 proof, which is why `allow_legacy_proofs: true` is mandatory. A v4
+integration that omits it cannot satisfy the request at all.
+
+**Two findings from the returned payload that change the design:**
+
+**1. An empty signal binds the proof to nothing.** The result carried
+`signal_hash: 0x00c5d246…`, the hash of the empty string. That proof attests
+"a human completed a selfie for this action" — not "this human approved *this*
+payment". As an approval gate that is decorative. The signal must carry the
+proposal id.
+
+**2. World's documented uniqueness rule is wrong for this product.** The docs
+prescribe `UNIQUE (nullifier, action)`. The nullifier is RP- and action-scoped
+and is *stable per person*, so with our static action that constraint means
+**each human may approve exactly one payment ever** — the second approval is
+rejected as a replay. Adopting the documented rule unmodified would have shipped
+an approval gate that bricks itself after one use, and the failure would look
+like a security feature working correctly.
+
+**Decision**: keep the action static and scope uniqueness to the signal —
+`UNIQUE (nullifier, action, signal)` with `signal = proposalId`. The same
+approver can approve many payments; nobody can approve the same one twice. The
+signal is inside the verified proof, so it cannot be forged by the client. The
+alternative — a dynamic `approve-payment-<id>` action — is rejected because each
+action must be pre-registered in the Portal, which does not survive contact with
+real payment volume.
+
+**Assurance, stated honestly**: Selfie Check is *medium* assurance and explicitly
+not one-person-one-account. It proves a live human is present, not *which*
+human, and lapses after 90 days of inactivity. It therefore belongs on the
+approver as anti-automation friction — it is NOT beneficiary identity, which
+rests on DigiLocker plus the EIP-712 wallet-control signature (§4.7, D02). The
+submission must not claim otherwise.
+
+**Test surface**: `apps/web/src/app/world-id-test` — standalone, not wired into
+payments, prints the active preset and environment on screen so a reviewer can
+confirm what was requested without reading source. Signing happens only in
+`api/world-id/rp-signature`; the served HTML was grepped to confirm the key
+never reaches the client bundle.
+
+### D49a · Nullifier continuity confirmed by a second run — and two traps it exposed — `build`
+
+The whole "is this the same person who onboarded?" design rests on one claim:
+same human + same action ⇒ same nullifier. Verifying twice as the same person
+confirms it, and confirms the second run was a genuinely fresh proof rather than
+a cached response:
+
+| Field | Run 1 | Run 2 |
+|---|---|---|
+| `nonce` | `0x00aefa23…` | `0x001e91d7…` |
+| `merkle_root` | `0x1a7f791c…` | `0x206b1e80…` |
+| `proof` | different bytes | different bytes |
+| **`nullifier`** | `0x17a81bf1…` | **`0x17a81bf1…`** |
+
+New proof, new nonce, different merkle root, identical nullifier. Continuity is
+observed, not assumed — so onboarding can store the nullifier and any later gate
+can compare against it, with no photo held by us and no biometric ever crossing
+into our custody.
+
+**Trap 1 — World detects nullifier reuse and approves it anyway.** Run 2 came
+back `"Proof verified successfully (nullifier reuse)"` with `success: true` and
+HTTP 200. The verifier annotates reuse; it does not reject it. Anything gating on
+`success` alone would let the same person approve the same payment indefinitely.
+Replay protection is entirely ours — the `UNIQUE (nullifier, action, signal)`
+constraint is the control, and the upstream hint is diagnostics only: it is an
+unstructured `message` string, and `success` does not change.
+
+**Trap 2 — `created_at` is first-seen, not verified-at.** Both runs returned
+`created_at: 2026-09-09T22:15:54.351489+00:00`, hours apart. It timestamps when
+the nullifier was first observed, not this verification. Persisting it as the
+verification time would put a wrong timestamp in the evidence chain; the server's
+own clock is the source of truth for `verifiedAt`.
+
+**Not tested**: that a different person yields a different nullifier. One test
+subject was available. It follows from the protocol's design but has not been
+observed here, and must not be described as verified.
+
+### D49b · The v4 verifier does not check your signal — that moved to us — `security`
+
+Caught by reading the migration guide rather than by testing, because nothing
+about it fails visibly.
+
+The v3 API took the signal explicitly:
+
+```ts
+verifyCloudProof(proof, app_id, action, signal)
+```
+
+The v4 endpoint takes the IDKit payload and nothing else. It is therefore never
+told which signal we *expected*, and cannot be: a successful verification means
+only "this proof is valid for whatever `signal_hash` is inside it". Confirming
+that is the signal we asked for is now entirely the integrator's job, and the
+docs never say so in those words.
+
+The first cut of `WorldIdService` had exactly this hole: it took the caller's
+`signal`, stored it, and never compared it to the proof. A genuine,
+correctly-signed proof bound to *anything else* — including the empty signal,
+which is what an unbound request produces and what both our captures carry —
+would have been recorded as authorising that specific payment. The row would
+have looked perfect.
+
+**Fix**: compare before storing, using the SDK's own hasher so we are not
+reimplementing the field-element encoding:
+
+```ts
+if (verified.signalHash !== hashSignal(input.signal)) throw new SignalMismatchError(...)
+```
+
+`hashSignal` comes from `@worldcoin/idkit-core/hashing`, which is why the API now
+depends on `idkit-core` despite never rendering a widget.
+
+**Related trap in the same guide, not yet a bug for us but one to remember**:
+"Legacy presets return the maximum credential a user has." Requesting
+`selfieCheckLegacy` can return an **Orb** credential if the user holds one, so
+`identifier` is not guaranteed to be `"selfie"`. That direction is an assurance
+upgrade so accepting it is right, but any policy keyed on the literal string
+`"selfie"` would reject the strongest users. The credential is recorded per row
+rather than assumed.
+
+**General lesson, and the third time this project has paid for it** (D43 Zod in
+WASM, D44 the invented endpoint): a check that silently moved from the provider
+to us is worse than a missing feature, because everything keeps returning 200.
+The only defence is reading the migration notes for what *stopped* being done on
+our behalf — not just what the new API accepts.
