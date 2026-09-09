@@ -1,0 +1,487 @@
+// Canonical data model. docs/architecture.md §3 is the source of truth for the
+// shapes here; every service is built against them.
+//
+// Deviations from §3 are marked "DEVIATION" with the reason. They are all
+// integrity constraints the prose already implies but the schema block did not
+// express — see docs/decisions.md D25.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WalletStatus {
+  PENDING_VERIFICATION
+  CONFIRMED
+  REVOKED
+}
+
+enum PaymentDecision {
+  SAFE_TO_SEND
+  DO_NOT_SEND
+  REVERIFY
+  SEND_TEST_AMOUNT
+}
+
+enum PaymentStatus {
+  DRAFT
+  DECISION_PENDING
+  AWAITING_APPROVAL
+  APPROVED
+  SENT
+  CONFIRMED_ON_CHAIN
+  EXCEPTION
+}
+
+enum ExceptionType {
+  OVERPAY
+  MISDIRECT
+  DUPLICATE
+  WRONG_ASSET
+  DISPUTE
+}
+
+enum ExceptionStatus {
+  OPEN
+  IN_RECOVERY
+  RESOLVED
+  WRITTEN_OFF
+}
+
+enum PayeeType {
+  INDIVIDUAL // freelancer, contractor, sole supplier — NO business registry exists for these
+  BUSINESS
+}
+
+enum VerificationTier {
+  TIER0_UNVERIFIED // wallet signature only — never eligible for SAFE_TO_SEND
+  TIER1_LIVENESS // + Selfie Check liveness + phone OTP
+  TIER2_IDENTITY // + government ID document with face match to liveness selfie
+  TIER3_ADDRESS // + physically verified address (postcard code preferred)
+}
+
+// DEVIATION: §3 types these three as String with the allowed values in a
+// comment. They are closed vocabularies that gate risk decisions, so an
+// unexpected value must be a migration, not a row. idDocumentType stays a
+// String — that set genuinely grows per country and per KYC provider.
+enum KybStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum PhoneLineType {
+  MOBILE
+  LANDLINE
+  VOIP // disposable — NOT usable for a dispute callout, must be flagged weak
+}
+
+enum AddressVerifiedMethod {
+  POSTCARD_CODE // strongest
+  ID_DOCUMENT // India: DigiLocker Aadhaar Poa
+  DATABASE_LOOKUP
+  UNVERIFIED
+}
+
+/// Encrypted blobs kept in Postgres rather than an object store.
+///
+/// §3 describes `photoEncryptedRef` and `rawContextEncryptedRef` as pointers
+/// but never says to what. For the MVP the ciphertext lives here and the "ref"
+/// is this row's id: one datastore, one backup story, one access-control
+/// surface — and these payloads are small (a UIDAI portrait is a few KB).
+///
+/// The ref is a real foreign key, not a loose string, so a pointer cannot
+/// dangle and the blob cannot be deleted out from under the record that cites
+/// it (D30).
+model EncryptedBlob {
+  id   String   @id @default(uuid())
+  kind BlobKind
+
+  /// AES-256-GCM. Authenticated, so a tampered blob fails to decrypt rather
+  /// than returning plausible garbage.
+  ciphertext Bytes
+  /// 96-bit IV, fresh per blob. Never reused with the same key.
+  iv         Bytes
+  authTag    Bytes
+
+  contentType String
+  byteLength  Int
+  createdAt   DateTime @default(now())
+
+  vendorPhotos    Vendor[]
+  acknowledgments RecipientAcknowledgment[]
+
+  @@index([kind])
+}
+
+enum BlobKind {
+  /// UIDAI <Pht> portrait, used for face match against the liveness selfie.
+  IDENTITY_PHOTO
+  /// Raw context behind a recipient acknowledgment commitment.
+  ACK_CONTEXT
+}
+
+model Vendor {
+  id               String           @id @default(uuid())
+  payeeType        PayeeType
+  verificationTier VerificationTier @default(TIER0_UNVERIFIED)
+
+  // --- INDIVIDUAL payees ---
+  legalFirstName        String?
+  legalLastName         String?
+  dobEncrypted          String? // AES-256-GCM, KMS-wrapped — never plaintext
+  idDocumentCheckRef    String? // opaque ref to KYC provider session (Persona/Onfido/Sumsub)
+  idDocumentType        String? // PASSPORT_NFC | DRIVING_LICENSE | NATIONAL_ID | DIGILOCKER_AADHAAR
+  //                             Government-signed sources (PASSPORT_NFC, DIGILOCKER_AADHAAR)
+  //                             are materially stronger than a photo/OCR of a document
+  faceMatchScore        Float? // liveness selfie <-> ID document photo
+  worldIdSelfieCheckRef String? // liveness/continuity credential
+
+  // --- DIGILOCKER (India) — see §4.7. Verified working against live API 2026-09-08 ---
+  digilockerUserId       String?        @unique
+  //                         Stable pseudonymous DigiLocker account id, present in BOTH
+  //                         the PAN <Person uid> and the Aadhaar KycRes txn string.
+  //                         USE THIS as the identity primary key. Never the Aadhaar number.
+  digilockerSessionId    String?
+  aadhaarLast4           String? // e.g. "1234". UIDAI returns "xxxxxxxx1234" — the full Aadhaar
+  //                                number is NEVER exposed by DigiLocker. Do not build any UI
+  //                                that asks a user to type it: receiving it would create
+  //                                Aadhaar Data Vault obligations this flow otherwise avoids.
+  aadhaarKycTtl          DateTime? // KycRes ttl (observed: issue + 1 year). Schedule re-verification
+  //                                 before this date; CONFIRMED is not permanent.
+  panNumberHmac          String? // HMAC-SHA256(PAN, pepper) — never plaintext
+  panVerifiedOn          DateTime?
+  photoEncryptedRef      String? // -> EncryptedBlob.id. The UIDAI <Pht> portrait, used for face-match.
+  photoBlob              EncryptedBlob? @relation(fields: [photoEncryptedRef], references: [id], onDelete: Restrict)
+  xmlSignatureVerified   Boolean        @default(false)
+  //                                MUST be true before CONFIRMED. See §4.7 — an unverified XML
+  //                                is just a text file; the XMLDSig signature IS the security property.
+  xmlSignatureVerifiedAt DateTime?
+  /// SHA-256 of the raw signed XML, one per document.
+  ///
+  /// DEVIATION: not in §3. The IdentityBinding attestation signs over these
+  /// hashes, so verifying that signature later requires reconstructing the
+  /// exact payload — and the raw documents are deliberately not retained.
+  /// Without these the attestation is unverifiable after the session ends.
+  aadhaarDocHash         String?
+  panDocHash             String?
+
+  crossDocConsistent Boolean @default(false)
+  //                                name/dob/gender matched across Aadhaar and PAN. Mismatch is a
+  //                                strong fraud signal and must block CONFIRMED.
+
+  // --- BUSINESS payees ---
+  legalEntityName         String?
+  taxIdHmac               String? // HMAC-SHA256(taxId, pepper) — never store raw
+  registryVerifiedName    String? // from business-registry lookup; mismatch vs submitted blocks KYB
+  registryVerifiedContact String? // contact AS RETURNED BY THE REGISTRY — see callback rule below
+
+  // --- COMMON: verified reachability, used for dispute callout ---
+  country                  String
+  verifiedPhone            String? // OTP-verified at onboarding, encrypted
+  verifiedPhoneAt          DateTime?
+  phoneLineType            PhoneLineType? // VOIP/disposable MUST be flagged weak: it is not
+  //                                         usable for a real dispute callout
+  verifiedEmail            String?
+  verifiedAddressEncrypted Json? // structured address, encrypted
+  addressVerifiedMethod    AddressVerifiedMethod?
+  addressVerifiedAt        DateTime?
+
+  // --- Signed attestation (dispute evidence) ---
+  attestationSig      String? // EIP-712 sig over attestationDataHash, signed by the payee's
+  //                             wallet key: "I affirm this information about me is true."
+  //                             Turns a data-entry claim into signed, repudiation-resistant
+  //                             evidence usable in a legal dispute.
+  attestationDataHash String?
+  attestedAt          DateTime?
+
+  // --- Session binding (see "Identity binding" note in §3) ---
+  onboardingSessionNonce String? // MUST be identical across the liveness check, the document
+  //                                check, and the wallet control signature. Differing nonces
+  //                                means the artifacts may belong to different people — reject.
+
+  kybStatus KybStatus @default(PENDING)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  wallets     VendorWallet[]
+  payments    PaymentRequest[]
+  credentials VerifiableCredential[]
+
+  @@index([kybStatus])
+}
+
+model VendorWallet {
+  id             String  @id @default(uuid())
+  vendorId       String
+  vendor         Vendor  @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  address        String
+  network        String // e.g. "ethereum", "hedera"
+  tokenContract  String?
+  version        Int
+  supersededById String? @unique // points to the next version once rotated
+
+  // DEVIATION: self-relation made explicit. §3 leaves supersededById a bare
+  // string; a dangling pointer would silently break the rotation history that
+  // answers "which address was CONFIRMED on date X" (D01).
+  supersededBy VendorWallet? @relation("WalletSupersession", fields: [supersededById], references: [id], onDelete: Restrict)
+  supersedes   VendorWallet? @relation("WalletSupersession")
+
+  status              WalletStatus @default(PENDING_VERIFICATION)
+  controlProofSig     String? // EIP-712 signature — proves WALLET CUSTODY ONLY.
+  //                         Does NOT prove the signer represents the named legal entity.
+  //                         Never treat this alone as sufficient for CONFIRMED.
+  controlProofNonce   String?
+  callbackConfirmedAt DateTime? // out-of-band confirmation timestamp
+  callbackChannelUsed String? // the actual phone/contact dialed — MUST equal
+  //                             Vendor.registryVerifiedContact for a new vendor, or the
+  //                             pre-existing contact on file for an existing vendor's wallet
+  //                             change. Reject confirmation if this doesn't match; never
+  //                             accept a contact value taken from the current submission.
+  callbackConfirmedBy String? // operator who placed the call
+  confirmedAt         DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  payments   PaymentRequest[]
+  credential VerifiableCredential?
+
+  @@unique([vendorId, version]) // DEVIATION: two wallets at the same version would make
+  //                               the rotation history ambiguous. §3 had a plain index.
+  @@index([vendorId, version])
+  // The ERC-3643 identity-registry hook (§4.5) looks wallets up by address.
+  // Not unique: an address may legitimately reappear as a later version after
+  // revocation. "At most one CONFIRMED wallet per address" is enforced in the
+  // service layer, where the status transition happens.
+  @@index([address, network])
+}
+
+/// A verifiable credential asserting that a wallet passed verification.
+///
+/// Issued when a VendorWallet reaches CONFIRMED, and referenced on-chain by
+/// `grantKyc(account, vcId, validFrom, validTo, issuer)` — the chain stores this
+/// row's id and a validity window, never the credential body (D42).
+///
+/// The body asserts THAT checks passed, never the underlying documents: no
+/// name, no address, no Aadhaar digits. A credential is published to a chain by
+/// reference and must be safe to disclose in full (design principle 2, D27).
+model VerifiableCredential {
+  id       String       @id @default(uuid())
+  vendorId String
+  vendor   Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  walletId String       @unique
+  wallet   VendorWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  /// The wallet address the credential is about — the on-chain KYC subject.
+  subjectAddress String
+
+  /// The claims, as signed. PII-free by construction.
+  claims Json
+
+  /// EIP-712 signature over the claims by the platform issuer key.
+  signature     String
+  /// Issuer address, matching the `issuer` argument of grantKyc.
+  issuerAddress String
+
+  issuedAt  DateTime  @default(now())
+  /// From `aadhaarKycTtl`: verification is time-bounded, so the grant is too (D06).
+  expiresAt DateTime?
+  revokedAt DateTime?
+
+  /// Set once the on-chain grant lands, so a re-run does not double-grant.
+  grantedTxHash String?
+
+  @@index([subjectAddress])
+  @@index([revokedAt, expiresAt])
+}
+
+model PaymentRequest {
+  id                      String       @id @default(uuid())
+  vendorId                String
+  vendor                  Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  vendorWalletId          String
+  vendorWallet            VendorWallet @relation(fields: [vendorWalletId], references: [id], onDelete: Restrict)
+  invoiceRef              String
+  amount                  Decimal      @db.Decimal(38, 18)
+  //                                      DEVIATION: explicit precision. ERC-20 stablecoins carry
+  //                                      18 decimals; leaving Prisma's default risks silent
+  //                                      rounding on a value that moves money.
+  token                   String
+  network                 String
+  senderContextCommitment String // keccak256 hash, see §4.8
+
+  decision           PaymentDecision?
+  decisionReasonCode String?
+  matchScore         Float?
+  status             PaymentStatus    @default(DRAFT)
+  txHash             String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  proposal        Proposal?
+  approvalEvent   ApprovalEvent?
+  recipientAck    RecipientAcknowledgment?
+  exceptionCase   ExceptionCase?
+  evidenceRecords EvidenceRecord[]
+
+  @@index([vendorId, createdAt])
+  @@index([status])
+  @@index([txHash]) // reconciliation looks payments up by on-chain hash
+}
+
+/// A payment queued for human approval.
+///
+/// DEVIATION: not in §3, but §4.3's `PendingProposal` contract carries its own
+/// id and `proposedAt` — which implies a record, not a derived view of
+/// PaymentRequest. Keeping it separate also distinguishes two different facts:
+/// "the decision engine permits this" (status AWAITING_APPROVAL) from "an agent
+/// actually queued it for a human". Only the second belongs in the approver's
+/// queue.
+model Proposal {
+  id               String         @id @default(uuid())
+  paymentRequestId String         @unique
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+
+  /// The agent-scoped identity that wrote it. Never an approver (D12).
+  proposedBy String
+
+  /// Opaque World ID Selfie Check reference, when the flow captured one.
+  /// Never the raw proof (§4.6).
+  selfieCheckProofRef String?
+
+  /// Snapshot at proposal time. The queue must show what was true when the
+  /// decision was made, not what became true later.
+  isNewOrChangedAddress Boolean @default(false)
+
+  createdAt  DateTime  @default(now())
+  /// Set when a send is reported against it; a consumed proposal leaves the queue.
+  consumedAt DateTime?
+
+  @@index([consumedAt, createdAt])
+}
+
+model ApprovalEvent {
+  id                  String         @id @default(uuid())
+  paymentRequestId    String         @unique
+  paymentRequest      PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+  approverId          String
+  selfieCheckVerified Boolean        @default(false)
+  selfieCheckProofRef String? // opaque reference to stored IDKit result, not the raw proof
+  ledgerConfirmed     Boolean        @default(false)
+  ledgerConfirmedAt   DateTime?
+  approvedAt          DateTime       @default(now())
+}
+
+model RecipientAcknowledgment {
+  id                     String         @id @default(uuid())
+  paymentRequestId       String         @unique
+  paymentRequest         PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+  recipientAddress       String
+  recipientSignature     String // EIP-712 sig over recipientCommitment
+  recipientCommitment    String // keccak256 hash of raw context, see §4.8
+  rawContextEncryptedRef String? // -> EncryptedBlob.id
+  rawContextBlob         EncryptedBlob? @relation(fields: [rawContextEncryptedRef], references: [id], onDelete: Restrict)
+  verifiedAt             DateTime       @default(now())
+}
+
+model ExceptionCase {
+  id               String          @id @default(uuid())
+  paymentRequestId String          @unique
+  paymentRequest   PaymentRequest  @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+  type             ExceptionType
+  status           ExceptionStatus @default(OPEN)
+  playbookSteps    Json // ordered array of {step, status, note}
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  resolvedAt       DateTime?
+
+  @@index([status])
+}
+
+/// Append-only. Deliberately has no updatedAt: a record that can be revised is
+/// not evidence. Corrections are new records, never edits (D07).
+model EvidenceRecord {
+  id               String         @id @default(uuid())
+  paymentRequestId String
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+  eventType        String // "vendor_match" | "decision" | "approval" | "send" | "ack" |
+  //                         "exception_opened" | "evidence_accessed" — open set, validated
+  //                         by the Zod schemas in @cp/shared-types (docs/evidence-schema.md)
+  /// The canonical payload this record hashed.
+  ///
+  /// DEVIATION: §3 stores only the hash. But verifying a chain means
+  /// RECOMPUTING each hash from its content — with only hashes you can check
+  /// that links point at each other, not that any record still says what it
+  /// said. And evidence with no content cannot be read back in a dispute,
+  /// which is the entire purpose. PII never appears here by construction: the
+  /// payload schemas are a closed union of identifiers, enums, scores and
+  /// hashes (D27).
+  payload          Json
+
+  payloadHash        String // keccak256 of this record's canonical JSON payload
+  previousRecordHash String // hash of the prior record in the chain (genesis = "0"*64)
+  hcsAnchorTxId      String? // filled in by the batch anchoring job, see §4.8
+  createdAt          DateTime @default(now())
+
+  // DEVIATION: §3 ordered the chain by createdAt alone. Two records written in
+  // the same transaction can share a timestamp, which makes the order — and so
+  // the chain — ambiguous. Uniqueness on the link instead means the chain is
+  // reconstructed by following previousRecordHash, and a fork (two records
+  // claiming the same predecessor) is rejected by the database rather than
+  // discovered during verification.
+  @@unique([paymentRequestId, previousRecordHash])
+  @@index([paymentRequestId, createdAt])
+  @@index([hcsAnchorTxId]) // the anchoring job scans for NULL
+}
+
+/// One CRE vendor-match invocation, and the verdict that came back.
+///
+/// This table exists because CRE's HTTP trigger is fire-and-forget (D48):
+/// `workflows.execute` returns an execution id and nothing else, and there is
+/// no API to read a workflow's return value. So the workflow POSTs its verdict
+/// back to /internal/vendor-match-result and the caller awaits the row.
+///
+/// It is also the correlation record that makes the callback safe. The row is
+/// created BEFORE the workflow is invoked, so a callback naming a requestId
+/// that does not exist here is rejected outright rather than trusted.
+model VendorMatchRequest {
+  /// The requestId handed to the workflow. Random, single-use, and the only
+  /// thing the callback may use to address a verdict.
+  id            String @id @default(uuid())
+  vendorId      String
+  /// Echoed back for auditing: what was asked, not just what was answered.
+  walletAddress String
+  network       String
+
+  status VendorMatchRequestStatus @default(PENDING)
+
+  /// Null until the callback lands. Read together with `status` — a null
+  /// verdict on a COMPLETED row would be a bug, not "no match".
+  match      Boolean?
+  score      Float?
+  reasonCode String?
+
+  /// Returned by the gateway at invocation, so a stuck request can be traced
+  /// with `cre execution status <id>`.
+  workflowExecutionId String?
+  /// Set when the workflow could not produce a verdict at all. A failure is
+  /// NOT a negative verdict — the caller must fail closed, never treat "we
+  /// could not check" as "we checked and it failed" (D44).
+  failureReason       String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([vendorId, createdAt])
+  @@index([status, createdAt]) // the awaiting caller polls on this
+}
+
+enum VendorMatchRequestStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}

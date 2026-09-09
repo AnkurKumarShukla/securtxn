@@ -1,0 +1,20 @@
+# ==========================================================================
+# CRE PROJECT SETTINGS FILE
+# ==========================================================================
+# This workflow does not read from or write to a chain — its result is the
+# HTTP trigger's synchronous response, not an on-chain report. `simulate`
+# still requires at least one RPC configured under the target regardless
+# (confirmed by running it without one: "no RPC URLs found for target" —
+# the simulator's runtime initializes chain clients unconditionally). Kept
+# unused otherwise; extend only if a future revision writes on-chain via
+# usingTheDons() (see workflow.ts).
+staging-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: https://ethereum-sepolia-rpc.publicnode.com
+
+# ==========================================================================
+production-settings:
+  rpcs:
+    - chain-name: ethereum-mainnet
+      url: https://ethereum-rpc.publicnode.com

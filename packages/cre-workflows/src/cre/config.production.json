@@ -1,0 +1,6 @@
+{
+  "apiBaseUrl": "https://api.internal.example",
+  "minScore": 0.7,
+  "authorizedKeys": [],
+  "confidential": true
+}
