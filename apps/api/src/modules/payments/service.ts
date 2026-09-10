@@ -21,7 +21,7 @@ import { ConflictError, NotFoundError, UnprocessableError } from "../../lib/erro
 import { buildAcknowledgmentMessage, verifyAcknowledgment } from "../../lib/eip712.js";
 import { encryptJson } from "../../lib/crypto.js";
 import type { Config } from "../../config/index.js";
-import { decide } from "../decision/index.js";
+import { decide, recommendSettlementMode } from "../decision/index.js";
 import type { TierThresholds } from "../decision/types.js";
 import type { SanctionsScreener } from "../sanctions/index.js";
 import { EvidenceService } from "../evidence/service.js";
@@ -66,6 +66,7 @@ export class PaymentService {
         amount: new Prisma.Decimal(input.amount),
         token: input.token,
         network: input.network,
+        settlementMode: input.settlementMode,
         // A commitment over the payment context. The raw context stays
         // off-chain; only this fixed-size hash may ever be anchored
         // (design principle 2).
@@ -193,6 +194,7 @@ export class PaymentService {
       decision: verdict.decision,
       reasonCode: verdict.reasonCode,
       matchScore: matchResult.score,
+      recommendedSettlementMode: recommendSettlementMode(verdict.reasonCode),
     };
   }
 
@@ -267,6 +269,7 @@ export class PaymentService {
         data: {
           paymentRequestId: paymentId,
           recipientAddress: input.recipientAddress,
+          method: "EIP712_SIGNATURE",
           recipientSignature: input.recipientSignature,
           recipientCommitment: commitment,
           rawContextEncryptedRef: blob.id,
@@ -280,6 +283,7 @@ export class PaymentService {
         data: {
           recipientAddress: input.recipientAddress,
           recipientCommitment: commitment,
+          method: "EIP712_SIGNATURE",
         },
       });
 
@@ -394,6 +398,7 @@ export function toPaymentSummary(
     token: payment.token,
     network: payment.network as PaymentSummary["network"],
     status: payment.status,
+    settlementMode: payment.settlementMode,
     decision: payment.decision,
     decisionReasonCode: payment.decisionReasonCode as PaymentSummary["decisionReasonCode"],
     matchScore: payment.matchScore,

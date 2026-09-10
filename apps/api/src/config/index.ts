@@ -82,6 +82,7 @@ const EnvSchema = z
     JWT_AGENT_SECRET: z.string().min(32),
     JWT_APPROVER_SECRET: z.string().min(32),
     JWT_BRIDGE_SECRET: z.string().min(32),
+    JWT_ISSUER_SECRET: z.string().min(32),
 
     /**
      * Per-customer risk appetite: the largest payment each verification tier
@@ -130,6 +131,37 @@ const EnvSchema = z
      * chain the moment the Hedera keys were filled in.
      */
     COMPLIANCE_GATEWAY: z.enum(["ats", "mock"]).default("mock"),
+    /**
+     * Token and escrow writes: issuance, minting, corporate actions, transfers,
+     * HTLC locks and refunds. "hedera" broadcasts; "mock" records a marked
+     * synthetic hash and touches no chain.
+     *
+     * Separate from COMPLIANCE_GATEWAY on purpose. That one governs KYC grants,
+     * which are cheap and safe to leave live; this one moves value. Defaulting
+     * both to mock means a fresh checkout with real credentials in .env cannot
+     * spend anything by accident (D21).
+     */
+    CHAIN_GATEWAY: z.enum(["hedera", "mock"]).default("mock"),
+    /**
+     * Evidence anchoring to a Hedera consensus topic.
+     *
+     * A third switch because it is a third kind of write: not KYC, not value,
+     * but publishing a commitment. Cheap and non-destructive, yet still mock by
+     * default so a test run never posts to the real audit topic — a topic with
+     * test roots interleaved among real ones is worse than one with gaps (D21).
+     */
+    ANCHOR_GATEWAY: z.enum(["hcs", "mock"]).default("mock"),
+    /**
+     * The consensus topic roots are published to.
+     *
+     * Created once per environment with `pnpm --filter @cp/contracts create:topic`
+     * and never at runtime: a topic created on demand would orphan every anchor
+     * written to the previous one after any config slip.
+     */
+    HCS_TOPIC_ID: z
+      .string()
+      .regex(/^\d+\.\d+\.\d+$/, "must be a Hedera topic id like 0.0.12345")
+      .optional(),
     /**
      * Minimum name similarity (0-1) that counts as a vendor match. Risk
      * appetite, not a constant — set it lower and more payments reach a human
@@ -214,6 +246,32 @@ const EnvSchema = z
     /** Mirror node — read-only queries for account and contract state. */
     HEDERA_MIRROR_NODE_URL: z.string().url().optional(),
     /**
+     * Pays out approved payments and opens escrows.
+     *
+     * Distinct from the issuer key by design: minting an instrument and
+     * spending the treasury are different authorities, and a deployment should
+     * be able to hold them in different places. Falls back to the issuer key
+     * when unset, which is fine for a demo and stated in the startup log so it
+     * is never a silent assumption.
+     */
+    PLATFORM_TREASURY_PRIVATE_KEY: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 0x-prefixed 32-byte private key")
+      .optional(),
+    /** The deployed PaymentHtlc escrow. Required before any HTLC payment settles. */
+    HTLC_CONTRACT_ADDRESS: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]{40}$/, "must be a 0x-prefixed 20-byte address")
+      .optional(),
+    /**
+     * How long a payee has to claim before the payer may take the funds back.
+     *
+     * A day by default. Too short strands an honest payee in a different
+     * timezone; too long leaves misdirected money unrecoverable for exactly
+     * that long, which is the problem this product exists to shorten.
+     */
+    HTLC_TIMELOCK_SECONDS: z.coerce.number().int().min(60).default(86_400),
+    /**
      * Business-logic configuration registered on the resolver:
      * 0x..01 equity, 0x..02 bond. Passed to Bond.create as `configId`.
      */
@@ -261,9 +319,14 @@ const EnvSchema = z
 
     // Shared role secrets would collapse the agent/approver separation (D12)
     // into decoration, since either token would verify against the other.
-    const roleSecrets = [env.JWT_AGENT_SECRET, env.JWT_APPROVER_SECRET, env.JWT_BRIDGE_SECRET];
+    const roleSecrets = [
+      env.JWT_AGENT_SECRET,
+      env.JWT_APPROVER_SECRET,
+      env.JWT_BRIDGE_SECRET,
+      env.JWT_ISSUER_SECRET,
+    ];
     if (new Set(roleSecrets).size !== roleSecrets.length) {
-      fail("JWT_AGENT_SECRET", "the three role secrets must all differ");
+      fail("JWT_AGENT_SECRET", "the role secrets must all differ");
     }
 
     if (env.NODE_ENV === "production" && env.ENABLE_DOCS) {
@@ -303,7 +366,7 @@ export function loadConfig(): Config {
   if (cached) return cached;
 
   const repoRoot = loadEnvFile();
-  const parsed = EnvSchema.safeParse(process.env);
+  const parsed = EnvSchema.safeParse(withoutEmptyValues(process.env));
 
   if (!parsed.success) {
     // Print the offending keys and reasons only — never the values.
@@ -322,6 +385,21 @@ export function loadConfig(): Config {
       .filter(Boolean),
   };
   return cached;
+}
+
+/**
+ * Drops variables that are present but empty.
+ *
+ * Hosting platforms routinely inject `KEY=` for a variable nobody set, and an
+ * empty string is not the same as absent to Zod: an optional field with a format
+ * rule fails on "" and takes the whole boot down. Treating empty as unset is
+ * what makes one `.env` shape work locally and on a deployment that pre-declares
+ * every key.
+ */
+function withoutEmptyValues(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(env).filter(([, value]) => value !== undefined && value.trim() !== ""),
+  );
 }
 
 /** Test helper — forces the next loadConfig() to re-read process.env. */

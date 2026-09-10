@@ -24,6 +24,7 @@ describe("config validation", () => {
     JWT_AGENT_SECRET: "1".repeat(32),
     JWT_APPROVER_SECRET: "2".repeat(32),
     JWT_BRIDGE_SECRET: "3".repeat(32),
+    JWT_ISSUER_SECRET: "4".repeat(32),
   };
 
   it("accepts a well-formed environment", () => {
@@ -157,6 +158,7 @@ describe("TLS configuration (§5)", () => {
     JWT_AGENT_SECRET: "1".repeat(32),
     JWT_APPROVER_SECRET: "2".repeat(32),
     JWT_BRIDGE_SECRET: "3".repeat(32),
+    JWT_ISSUER_SECRET: "4".repeat(32),
     ENABLE_DOCS: "false",
   };
 

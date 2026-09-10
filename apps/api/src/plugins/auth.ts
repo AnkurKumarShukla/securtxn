@@ -3,6 +3,8 @@
 // `agent` (autonomous code) may propose payments but may not touch /approvals/*.
 // `approver` may read the queue and report a completed send but may not propose.
 // `bridge` is the approval-bridge daemon's own identity.
+// `issuer` is the treasury: it creates securities, mints, and runs corporate
+// actions. It cannot approve a payout, and an approver cannot mint.
 //
 // Each role verifies against its OWN secret, so a token minted for one role
 // cannot be replayed as another even if the payload claims otherwise — the
@@ -24,6 +26,7 @@ const VERIFIER = {
   agent: "agentJwtVerify",
   approver: "approverJwtVerify",
   bridge: "bridgeJwtVerify",
+  issuer: "issuerJwtVerify",
 } as const satisfies Record<Role, string>;
 
 export type TokenPayload = { sub: string; role: Role };
@@ -55,6 +58,7 @@ async function authPlugin(app: FastifyInstance): Promise<void> {
     agent: app.config.JWT_AGENT_SECRET,
     approver: app.config.JWT_APPROVER_SECRET,
     bridge: app.config.JWT_BRIDGE_SECRET,
+    issuer: app.config.JWT_ISSUER_SECRET,
   };
 
   for (const role of Role.options) {

@@ -153,6 +153,7 @@ describe("evidence payloads", () => {
       data: {
         recipientAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         recipientCommitment: "0x" + "33".repeat(32),
+        method: "EIP712_SIGNATURE",
         legalName: "should-not-be-anchored",
       },
     });
@@ -180,6 +181,7 @@ describe("bridge contract", () => {
         decision: "SAFE_TO_SEND",
         decisionReasonCode: "ALL_CHECKS_PASSED",
         isNewOrChangedAddress: false,
+        settlementMode: "DIRECT",
         proposedAt: "2026-09-09T10:00:00.000Z",
       }).success,
     ).toBe(true);
@@ -219,6 +221,7 @@ describe("tier thresholds (D08)", () => {
       JWT_AGENT_SECRET: "1".repeat(32),
       JWT_APPROVER_SECRET: "2".repeat(32),
       JWT_BRIDGE_SECRET: "3".repeat(32),
+      JWT_ISSUER_SECRET: "4".repeat(32),
       ...(limits === undefined ? {} : { TIER_AMOUNT_LIMITS: limits }),
     });
     return { ...parsed, isProduction: false, corsOrigins: [] };
@@ -260,6 +263,7 @@ describe("tier thresholds (D08)", () => {
       JWT_AGENT_SECRET: "1".repeat(32),
       JWT_APPROVER_SECRET: "2".repeat(32),
       JWT_BRIDGE_SECRET: "3".repeat(32),
+      JWT_ISSUER_SECRET: "4".repeat(32),
     };
   }
 });

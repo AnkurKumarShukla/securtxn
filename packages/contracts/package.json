@@ -10,17 +10,22 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "deploy:testnet": "tsx scripts/deploy-testnet.ts",
     "prepare:security": "tsx scripts/prepare-security.ts",
-    "lifecycle": "tsx scripts/lifecycle-demo.ts"
+    "lifecycle": "tsx scripts/lifecycle-demo.ts",
+    "compile": "tsx scripts/compile.ts",
+    "deploy:htlc": "tsx scripts/deploy-htlc.ts",
+    "create:topic": "tsx scripts/create-hcs-topic.ts"
   },
   "dependencies": {
     "@cp/shared-types": "workspace:*",
+    "@hashgraph/sdk": "^2.81.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {
+    "@types/node": "^20.14.0",
+    "solc": "^0.8.36",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "@types/node": "^20.14.0"
+    "vitest": "^2.1.8"
   },
   "exports": {
     ".": {

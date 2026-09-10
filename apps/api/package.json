@@ -19,7 +19,9 @@
     "cre:e2e": "dotenv -e ../../.env -- tsx scripts/cre-e2e.ts",
     "cre:request": "dotenv -e ../../.env -- node scripts/new-match-request.mjs",
     "cre:show": "dotenv -e ../../.env -- node scripts/show-match-request.mjs",
-    "cert:dev": "bash scripts/generate-dev-cert.sh"
+    "cert:dev": "bash scripts/generate-dev-cert.sh",
+    "smoke:chain": "tsx scripts/live-chain-smoke.ts",
+    "smoke:anchor": "tsx scripts/anchor-smoke.ts"
   },
   "//": "Dependencies are added when the phase that uses them starts (docs/progress.md). viem, xml-crypto, @xmldom/xmldom and @hashgraph/sdk arrive with A3/A4 and Track B.",
   "dependencies": {

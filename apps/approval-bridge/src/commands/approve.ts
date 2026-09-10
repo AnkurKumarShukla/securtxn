@@ -32,6 +32,7 @@ export async function approveCommand(
     amount: proposal.amount,
     token: proposal.token,
     network: proposal.network,
+    settlementMode: proposal.settlementMode,
   });
 
   await api.reportSent(proposal.id, {

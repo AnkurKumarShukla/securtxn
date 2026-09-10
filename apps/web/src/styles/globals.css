@@ -1,1 +1,117 @@
-/* Global styles. */
+@import "tailwindcss";
+
+/*
+ * SecurTxn design tokens.
+ *
+ * ONE ACCENT, ON PURPOSE. This is a control layer in front of other people's
+ * money, and the interface has to read as calm and deliberate rather than
+ * energetic. Near-black surfaces, hairline borders, a single cool blue for
+ * anything actionable, and one restrained green reserved exclusively for
+ * "verified". Colour means something here; if it were decorative it would stop
+ * meaning anything.
+ *
+ * Tailwind v4: the theme lives in CSS, there is no tailwind.config.js.
+ */
+@theme {
+  --color-ink-950: #050609;
+  --color-ink-900: #080a0f;
+  --color-ink-850: #0b0e14;
+  --color-ink-800: #10141c;
+  --color-ink-700: #171c26;
+
+  --color-mist-50: #f5f7fa;
+  --color-mist-200: #d6dbe6;
+  --color-mist-400: #9aa3b5;
+  --color-mist-500: #6f7889;
+  --color-mist-600: #545c6b;
+
+  /* The one interactive colour. */
+  --color-signal-300: #a8c5ff;
+  --color-signal-400: #7ea6ff;
+  --color-signal-500: #5b8cff;
+  --color-signal-600: #3f6fe0;
+
+  /* Reserved for verified state. Never decorative. */
+  --color-verified-400: #5bd6a0;
+
+  /* Reserved for the blocked/refused state. */
+  --color-halt-400: #ff7a6b;
+
+  --font-sans:
+    var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-ink-950);
+    color: var(--color-mist-200);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Headings are tightened deliberately: at display sizes the default tracking
+     reads loose and consumer-grade. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.03em;
+  }
+
+  ::selection {
+    background: var(--color-signal-500);
+    color: var(--color-ink-950);
+  }
+
+  /* Every focus ring is visible. An operator who cannot see where they are is
+     an operator who approves the wrong row. */
+  :focus-visible {
+    outline: 2px solid var(--color-signal-400);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* The hero and the glitch panel both animate continuously. Anyone who has
+     asked their OS to stop that gets a still page, not a slower one. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility hairline {
+  border: 1px solid color-mix(in oklab, var(--color-mist-400) 14%, transparent);
+}
+
+/* The faint grid behind the darker sections. Structure, not decoration: it
+   gives the eye something to measure the spacing against. */
+@utility grid-veil {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in oklab, var(--color-mist-400) 6%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--color-mist-400) 6%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 72px 72px;
+}

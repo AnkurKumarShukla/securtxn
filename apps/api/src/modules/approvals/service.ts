@@ -181,6 +181,7 @@ type PaymentRow = {
   network: string;
   decision: string | null;
   decisionReasonCode: string | null;
+  settlementMode: string;
   vendor: { legalEntityName: string | null; legalFirstName: string | null; legalLastName: string | null };
   vendorWallet: { address: string };
 };
@@ -206,6 +207,7 @@ function toPendingProposal(input: { proposal: ProposalRow; payment: PaymentRow }
     token: payment.token,
     decision: payment.decision as PendingProposal["decision"],
     decisionReasonCode: payment.decisionReasonCode as PendingProposal["decisionReasonCode"],
+    settlementMode: payment.settlementMode as PendingProposal["settlementMode"],
     isNewOrChangedAddress: proposal.isNewOrChangedAddress,
     proposedAt: proposal.createdAt.toISOString(),
   };

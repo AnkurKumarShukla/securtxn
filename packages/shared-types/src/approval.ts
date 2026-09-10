@@ -7,7 +7,7 @@
 // Spec: docs/architecture.md §4.3
 
 import { z } from "zod";
-import { PaymentDecision } from "./enums.js";
+import { PaymentDecision, SettlementMode } from "./enums.js";
 import { AmountString, EvmAddress, IsoDateTime, Network, Uuid } from "./primitives.js";
 import { DecisionReasonCode } from "./payment.js";
 
@@ -30,6 +30,12 @@ export const PendingProposal = z.object({
   token: z.string(),
   decision: PaymentDecision,
   decisionReasonCode: DecisionReasonCode,
+  /**
+   * How this payment will settle. The operator is approving the mode as much as
+   * the amount: an escrow that the payee never claims comes back, and a direct
+   * transfer does not (D41).
+   */
+  settlementMode: SettlementMode,
   /**
    * True when this address has not been paid before. The operator should be
    * looking harder at these, and the decision engine will usually have

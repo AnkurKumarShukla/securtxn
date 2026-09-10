@@ -21,7 +21,17 @@ export function renderProposal(proposal: PendingProposal): string {
     `  │ Network   : ${proposal.network}`,
     `  │ Invoice   : ${proposal.invoiceRef}`,
     `  │ Decision  : ${proposal.decision} (${proposal.decisionReasonCode})`,
+    `  │ Settles   : ${proposal.settlementMode}`,
   ];
+
+  if (proposal.settlementMode === "HTLC") {
+    // Worth its own line. The operator is signing a lock, not a transfer, and
+    // the money sits in escrow until the payee proves receipt or the deadline
+    // returns it — a materially different thing to approve.
+    lines.push("  │");
+    lines.push("  │ ⓘ  SETTLES THROUGH ESCROW");
+    lines.push("  │    The payee must reveal a secret to collect. Unclaimed funds return.");
+  }
 
   if (proposal.isNewOrChangedAddress) {
     // The highest-risk case, called out rather than left for the operator to

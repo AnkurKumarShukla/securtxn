@@ -3,13 +3,15 @@ import {
   MockTransport,
   UnavailableTransport,
   decryptKeystore,
+  type SendRequest,
 } from "../src/wallet-cli.js";
 
-const request = {
+const request: SendRequest = {
   to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   amount: "12500.5",
   token: "USDC",
   network: "ethereum",
+  settlementMode: "DIRECT",
 };
 
 describe("mock transport", () => {
@@ -25,6 +27,16 @@ describe("mock transport", () => {
     const result = await new MockTransport().send(request);
     expect(result.broadcast).toBe(false);
     expect(result.transport).toBe("mock");
+  });
+
+  it("carries the settlement mode through the seam", async () => {
+    // The transport has to know which shape it is signing. A transport that
+    // ignored the mode would send a plain transfer for a payment the operator
+    // approved as an escrow, and that money would be gone for good (D41).
+    const escrow: SendRequest = { ...request, settlementMode: "HTLC" };
+    const result = await new MockTransport().send(escrow);
+    expect(result.txHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(result.broadcast).toBe(false);
   });
 
   it("never repeats a hash", async () => {

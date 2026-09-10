@@ -23,6 +23,7 @@ import { createDecipheriv, pbkdf2Sync, randomBytes, scryptSync } from "node:cryp
 import { readFileSync } from "node:fs";
 import { keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { SettlementMode } from "@cp/shared-types";
 import type { BridgeConfig, Transport } from "./config.js";
 
 export type SendRequest = {
@@ -30,6 +31,16 @@ export type SendRequest = {
   amount: string;
   token: string;
   network: string;
+  /**
+   * DIRECT is one transfer; HTLC is an approve followed by a lock against the
+   * escrow, and the funds do not reach `to` until the payee claims them.
+   *
+   * Carried through the seam rather than left to the caller, because a
+   * transport that ignored it would send a plain transfer for a payment the
+   * operator approved as an escrow — the money would arrive irrevocably, which
+   * is the precise outcome the mode was chosen to avoid (D41).
+   */
+  settlementMode: SettlementMode;
 };
 
 export type SendResult = {
@@ -72,7 +83,7 @@ export class MockTransport implements SigningTransport {
   readonly kind = "mock" as const;
 
   async send(request: SendRequest): Promise<SendResult> {
-    const seed = `${request.to}|${request.amount}|${request.token}|${Date.now()}|${randomBytes(8).toString("hex")}`;
+    const seed = `${request.to}|${request.amount}|${request.token}|${request.settlementMode}|${Date.now()}|${randomBytes(8).toString("hex")}`;
     return {
       txHash: keccak256(Buffer.from(seed, "utf8")),
       confirmedAt: new Date(),
@@ -126,10 +137,14 @@ export class LocalKeystoreTransport implements SigningTransport {
     // Deliberately not implemented as a native-token transfer: these are ERC-20
     // payouts, and a bare value send would move ETH instead of the token. The
     // encoding and gas handling belong here, wired against the token contract.
+    const shape =
+      request.settlementMode === "HTLC"
+        ? `an approve plus a PaymentHtlc lock of ${request.amount} ${request.token} for ${request.to}`
+        : `an ERC-20 transfer of ${request.amount} ${request.token} to ${request.to}`;
+
     throw new Error(
       `Local broadcast is not wired yet. Keystore unlocked successfully for ${account.address}; ` +
-        `next step is an ERC-20 transfer of ${request.amount} ${request.token} to ${request.to} ` +
-        `on ${request.network}.`,
+        `next step is ${shape} on ${request.network}.`,
     );
   }
 }

@@ -2,7 +2,7 @@
 // Spec: docs/architecture.md §4.1
 
 import { z } from "zod";
-import { PaymentDecision, PaymentStatus } from "./enums.js";
+import { PaymentDecision, PaymentStatus, SettlementMode } from "./enums.js";
 import { AmountString, Bytes32, EvmAddress, Network, Uuid } from "./primitives.js";
 
 /** POST /payments */
@@ -19,6 +19,13 @@ export const CreatePaymentRequest = z.object({
   amount: AmountString,
   token: z.string().min(1).max(20),
   network: Network,
+  /**
+   * Opt-in, and DIRECT when omitted. HTLC settlement is stronger evidence but
+   * it requires the payee to act, so making it the default would strand any
+   * payee who never claims. The safe mode has to be the one that always pays
+   * (D41).
+   */
+  settlementMode: SettlementMode.default("DIRECT"),
 });
 export type CreatePaymentRequest = z.infer<typeof CreatePaymentRequest>;
 
@@ -44,6 +51,15 @@ export const DecisionResult = z.object({
   reasonCode: DecisionReasonCode,
   /** Vendor-match confidence, 0–1. Null when the decision short-circuited. */
   matchScore: z.number().min(0).max(1).nullable(),
+  /**
+   * Advisory only — it changes nothing about the decision above.
+   *
+   * The engine has just worked out how much it trusts this payout, and that is
+   * exactly the input for choosing a settlement mode. A first payment to a
+   * newly seen address is the case where an unclaimed escrow refunding beats a
+   * transfer that cannot be undone.
+   */
+  recommendedSettlementMode: SettlementMode,
 });
 export type DecisionResult = z.infer<typeof DecisionResult>;
 
@@ -56,6 +72,7 @@ export const PaymentSummary = z.object({
   token: z.string(),
   network: Network,
   status: PaymentStatus,
+  settlementMode: SettlementMode,
   decision: PaymentDecision.nullable(),
   decisionReasonCode: DecisionReasonCode.nullable(),
   matchScore: z.number().nullable(),

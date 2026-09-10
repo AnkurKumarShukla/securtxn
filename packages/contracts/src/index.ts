@@ -37,6 +37,8 @@ export {
   FACTORY_ABI,
   RESOLVER_ABI,
   ROLES,
+  DEFAULT_PARTITION,
+  BOND_LIFECYCLE_ABI,
   CONFIG_ID,
   REGULATION_TYPE,
   REGULATION_SUB_TYPE,
@@ -44,3 +46,54 @@ export {
   type IssueBondResult,
   type BondIssuerOptions,
 } from "./ats/bond.js";
+
+export { createHederaClients, type HederaClients, type HederaClientOptions } from "./ats/clients.js";
+
+export {
+  SecurityLifecycle,
+  TOKEN_ABI,
+  ACCESS_CONTROL_ABI,
+  SSI_ABI,
+  type CouponTerms,
+  type PrepareResult,
+} from "./ats/lifecycle.js";
+
+export {
+  HtlcClient,
+  deployPaymentHtlc,
+  computeLockId,
+  hashlockFor,
+  newPreimage,
+  paymentRefFor,
+  LOCK_STATUS,
+  type LockParams,
+  type LockStatus,
+  type LockView,
+  type HtlcClientOptions,
+} from "./htlc/client.js";
+
+export {
+  PAYMENT_HTLC_ABI,
+  PAYMENT_HTLC_BYTECODE,
+  PAYMENT_HTLC_COMPILER,
+} from "./htlc/artifact.js";
+
+export {
+  buildTree,
+  hashLeaf,
+  hashNode,
+  merkleProof,
+  merkleRoot,
+  verifyMerkleProof,
+  type MerkleProof,
+  type MerkleProofStep,
+} from "./evidence/merkle.js";
+
+export {
+  HcsAnchorClient,
+  messageUrl,
+  MAX_MESSAGE_BYTES,
+  type HcsAnchorOptions,
+  type SubmittedAnchor,
+  type FetchedMessage,
+} from "./hcs/anchor.js";

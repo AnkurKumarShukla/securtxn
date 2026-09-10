@@ -28,7 +28,75 @@ export const ROLES = {
   INTERNAL_KYC_MANAGER: "0xdd78fdcd1b38a5360405cef8d91e758ad0f42bf2ced681b803b3c2704b0a32a7",
   /** Required to register a trusted credential issuer via addIssuer. */
   SSI_MANAGER: "0x3120494a82251fe85b0403877539486dbfcf0f94c20741a3229cfad31f625ee1",
+  /** Mints the receivable. */
+  ISSUER: "0x5eeaf5602c75bf26e73b5206d0bd6ee82f621166255e5fd73cc06bc7bd84a95f",
+  /** Schedules coupons — the bond's defining corporate action. */
+  CORPORATE_ACTION: "0xa1acfc499025c99f55059195e6276f639d34a18aad7b8121b9192b7f438c55cd",
+  /** Moves the maturity date, e.g. settling a receivable early. */
+  MATURITY_MANAGER: "0xc20b7fd7efe1a2c9f69003a21c2c55c79ef84e16252b62599246ff01f6207314",
+  /** Redeems holdings once matured. */
+  MATURITY_REDEEMER: "0x433f48f8aca23480f6ab07666cbc9131d32a0b4672033453f65e18f4dd390523",
 } as const satisfies Record<string, Hex>;
+
+/** The single partition an unpartitioned security uses. */
+export const DEFAULT_PARTITION =
+  "0x0000000000000000000000000000000000000000000000000000000000000001" as const;
+
+/**
+ * Coupon and maturity operations.
+ *
+ * `rateStatus` distinguishes a fixed rate from one fixed later at the fixing
+ * date; 0 is fixed, which is what a receivable's single terminal coupon is.
+ */
+export const BOND_LIFECYCLE_ABI = [
+  {
+    type: "function",
+    name: "setCoupon",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "_newCoupon",
+        type: "tuple",
+        components: [
+          { name: "recordDate", type: "uint256" },
+          { name: "executionDate", type: "uint256" },
+          { name: "startDate", type: "uint256" },
+          { name: "endDate", type: "uint256" },
+          { name: "fixingDate", type: "uint256" },
+          { name: "rate", type: "uint256" },
+          { name: "rateDecimals", type: "uint8" },
+          { name: "rateStatus", type: "uint8" },
+        ],
+      },
+    ],
+    outputs: [{ name: "couponID_", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "getCouponCount",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "updateMaturityDate",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_newMaturityDate", type: "uint256" }],
+    outputs: [{ type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "redeemAtMaturityByPartition",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "_tokenHolder", type: "address" },
+      { name: "_partition", type: "bytes32" },
+      { name: "_amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
 
 /** From contracts/constants/regulation.sol. */
 export const REGULATION_TYPE = { NONE: 0, REG_S: 1, REG_D: 2 } as const;
@@ -327,6 +395,12 @@ export class BondIssuer {
       // Without this, addIssuer reverts — and without a registered issuer,
       // grantKyc reverts with AccountIsNotIssuer.
       { role: ROLES.SSI_MANAGER, members: [issuer] },
+      // Granted at deploy so the bond's lifecycle — mint, coupon, maturity,
+      // redemption — needs no follow-up role grants.
+      { role: ROLES.ISSUER, members: [issuer] },
+      { role: ROLES.CORPORATE_ACTION, members: [issuer] },
+      { role: ROLES.MATURITY_MANAGER, members: [issuer] },
+      { role: ROLES.MATURITY_REDEEMER, members: [issuer] },
     ] as const;
 
     const bondData = {

@@ -21,6 +21,8 @@ import { WorldIdService } from "./modules/worldid/service.js";
 import { HttpWorldIdProofVerifier } from "./modules/worldid/WorldIdProofVerifier.js";
 import { AtsComplianceGateway, MockComplianceGateway, type ComplianceGateway } from "@cp/contracts";
 import type { PrismaClient } from "@prisma/client";
+import { createAnchorGateway, type AnchorGateway } from "./lib/anchor-gateway.js";
+import { createChainGateway, type ChainGateway } from "./lib/chain.js";
 import type { IdentityProvider } from "./modules/identity/IdentityProvider.js";
 import { createIdentityProvider } from "./modules/identity/providers/index.js";
 import { createSanctionsScreener, type SanctionsScreener } from "./modules/sanctions/index.js";
@@ -39,6 +41,10 @@ export type Container = {
    * refuse with 503 rather than quietly behaving as if the check passed.
    */
   worldId: WorldIdService | null;
+  /** Token and escrow writes: issuance, minting, corporate actions, settlement. */
+  chainGateway: ChainGateway;
+  /** Publishes evidence Merkle roots to a Hedera consensus topic (D19). */
+  anchorGateway: AnchorGateway;
 };
 
 declare module "fastify" {
@@ -119,6 +125,14 @@ export function createContainer(
             }),
           })
         : null,
+    // Separate switch from the one above. KYC grants cost gas; these move
+    // value, and a deployment may reasonably want one live and the other not.
+    chainGateway: createChainGateway(config),
+
+    // A third switch, because this is a third kind of write: not KYC, not
+    // value, but publishing a commitment. Mock by default so a test run never
+    // interleaves synthetic roots with real ones on the audit topic.
+    anchorGateway: createAnchorGateway(config),
   };
 }
 
@@ -174,9 +188,31 @@ async function containerPlugin(app: FastifyInstance): Promise<void> {
       sanctionsScreener: "stub",
       complianceGateway: app.container.complianceGateway.kind,
       worldId: app.container.worldId ? "enabled" : "disabled",
+      chainGateway: app.container.chainGateway.kind,
+      anchorGateway: app.container.anchorGateway.kind,
     },
     "resolved swappable implementations",
   );
+
+  // The consensus client holds open gRPC channels that keep the event loop
+  // alive. Without this the process never exits: a graceful shutdown hangs
+  // until the platform SIGKILLs it, and every in-flight request dies with it.
+  app.addHook("onClose", async () => {
+    app.container.anchorGateway.close();
+  });
+
+  // Stated out loud because it is a deployment fact, not a detail: with one key
+  // the account that mints an instrument is also the account that spends the
+  // treasury, and no separation of those authorities exists.
+  if (
+    app.container.chainGateway.broadcasts &&
+    app.container.chainGateway.issuerAddress === app.container.chainGateway.treasuryAddress
+  ) {
+    app.log.warn(
+      { address: app.container.chainGateway.issuerAddress },
+      "issuer and treasury are the same account — set PLATFORM_TREASURY_PRIVATE_KEY to separate them",
+    );
+  }
 }
 
 export default fp(containerPlugin, { name: "container", dependencies: ["config", "prisma"] });

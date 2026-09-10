@@ -79,6 +79,55 @@ export const AddressVerifiedMethod = z.enum([
 ]);
 export type AddressVerifiedMethod = z.infer<typeof AddressVerifiedMethod>;
 
-/** API caller roles. `agent` and `approver` are mutually exclusive (D12). */
-export const Role = z.enum(["agent", "approver", "bridge"]);
+/**
+ * API caller roles. `agent` and `approver` are mutually exclusive (D12).
+ *
+ * `issuer` is the treasury side: it creates securities, mints them, and runs
+ * corporate actions. Separate from `agent` because those operations create
+ * value rather than move an approved payment, and separate from `approver`
+ * because approving someone else's payout and issuing your own instrument are
+ * different authorities that should not share a token.
+ */
+export const Role = z.enum(["agent", "approver", "bridge", "issuer"]);
 export type Role = z.infer<typeof Role>;
+
+/**
+ * How a payment settles. Per payment, never global (D41).
+ *
+ * DIRECT is a plain transfer and stays the default: a payee who will not or
+ * cannot claim still gets paid. HTLC routes the same payment through a hashed
+ * timelock escrow — the payee has to reveal a secret to take the funds, which
+ * produces an on-chain receipt, and anything unclaimed returns to the payer.
+ */
+export const SettlementMode = z.enum(["DIRECT", "HTLC"]);
+export type SettlementMode = z.infer<typeof SettlementMode>;
+
+/** Lifecycle of one escrow. CLAIMED and REFUNDED are mutually exclusive. */
+export const HtlcStatus = z.enum(["LOCKED", "CLAIMED", "REFUNDED"]);
+export type HtlcStatus = z.infer<typeof HtlcStatus>;
+
+/**
+ * How a recipient acknowledged receipt.
+ *
+ * Two routes to the same fact. EIP712_SIGNATURE is asked for after a direct
+ * transfer; HTLC_CLAIM falls out of the payee taking the money, so it cannot be
+ * declined without also declining the payment (D41).
+ */
+export const AcknowledgmentMethod = z.enum(["EIP712_SIGNATURE", "HTLC_CLAIM"]);
+export type AcknowledgmentMethod = z.infer<typeof AcknowledgmentMethod>;
+
+/** A tokenized instrument's state. MATURED takes redemptions, not new coupons. */
+export const SecurityStatus = z.enum(["ISSUED", "MATURED"]);
+export type SecurityStatus = z.infer<typeof SecurityStatus>;
+
+/** One confirmed on-chain operation against a security. */
+export const SecurityEventKind = z.enum([
+  "ISSUED",
+  "PREPARED",
+  "MINTED",
+  "TRANSFERRED",
+  "COUPON_SET",
+  "MATURITY_UPDATED",
+  "REDEEMED",
+]);
+export type SecurityEventKind = z.infer<typeof SecurityEventKind>;

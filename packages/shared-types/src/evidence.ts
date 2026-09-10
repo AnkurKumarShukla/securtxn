@@ -14,6 +14,7 @@
 import { z } from "zod";
 import { ExceptionType, PaymentDecision } from "./enums.js";
 import { AmountString, Bytes32, EvmAddress, IsoDateTime, Bytes32Hex, Uuid } from "./primitives.js";
+import { AcknowledgmentMethod } from "./enums.js";
 import { DecisionReasonCode } from "./payment.js";
 
 export const EvidenceEventType = z.enum([
@@ -22,6 +23,10 @@ export const EvidenceEventType = z.enum([
   "approval",
   "send",
   "ack",
+  /** The three HTLC settlement outcomes, each its own record (D41). */
+  "htlc_locked",
+  "htlc_claimed",
+  "htlc_refunded",
   "exception_opened",
   /** Reading the audit trail is itself audited (D18). */
   "evidence_accessed",
@@ -89,6 +94,47 @@ export const EvidencePayload = z.discriminatedUnion("eventType", [
       recipientAddress: EvmAddress,
       /** The raw acknowledged context stays off-chain, encrypted. */
       recipientCommitment: Bytes32,
+      /**
+       * Which route produced it. A dispute turns on how strong the receipt is,
+       * and a signature the payee was asked for is not the same evidence as a
+       * secret they revealed to collect the money (D41).
+       */
+      method: AcknowledgmentMethod,
+    }),
+  }),
+  z.object({
+    ...base,
+    eventType: z.literal("htlc_locked"),
+    data: z.object({
+      escrowAddress: EvmAddress,
+      lockId: Bytes32,
+      /** The hash, never the secret — the secret is what the payee spends. */
+      hashlock: Bytes32,
+      timelock: IsoDateTime,
+      amount: AmountString,
+      txHash: z.string(),
+    }),
+  }),
+  z.object({
+    ...base,
+    eventType: z.literal("htlc_claimed"),
+    data: z.object({
+      lockId: Bytes32,
+      /** Public the moment the claim was mined; recording it proves the match. */
+      preimage: Bytes32,
+      claimedBy: EvmAddress,
+      txHash: z.string(),
+    }),
+  }),
+  z.object({
+    ...base,
+    eventType: z.literal("htlc_refunded"),
+    data: z.object({
+      lockId: Bytes32,
+      /** Where the money went back to, which is the whole point of the record. */
+      refundedTo: EvmAddress,
+      amount: AmountString,
+      txHash: z.string(),
     }),
   }),
   z.object({
@@ -134,3 +180,88 @@ export const EvidenceChainResponse = z.object({
   brokenAtIndex: z.number().int().nullable(),
 });
 export type EvidenceChainResponse = z.infer<typeof EvidenceChainResponse>;
+
+// --- consensus anchoring (§4.8, D19) ---------------------------------------
+
+/**
+ * The message published to the topic.
+ *
+ * Deliberately tiny and self-describing. It has to fit one HCS message, and it
+ * has to still make sense to someone who finds it years from now with no access
+ * to this system — so it carries a version, the root, and how many records it
+ * covers, and nothing that would need our database to interpret.
+ */
+export const AnchorMessage = z.object({
+  v: z.literal(1),
+  kind: z.literal("evidence-anchor"),
+  /** keccak256 Merkle root over the batch's payload hashes. */
+  root: Bytes32,
+  count: z.number().int().positive(),
+  /** Our clock, stated as ours. The consensus timestamp is the real one. */
+  submittedAt: IsoDateTime,
+});
+export type AnchorMessage = z.infer<typeof AnchorMessage>;
+
+export const AnchorSummary = z.object({
+  id: Uuid,
+  merkleRoot: Bytes32,
+  recordCount: z.number().int(),
+  topicId: z.string(),
+  sequenceNumber: z.number().int(),
+  consensusTimestamp: z.string(),
+  transactionId: z.string(),
+  /** Public mirror-node URL. Null when nothing was published (D21). */
+  messageUrl: z.string().nullable(),
+  /** True once a mirror node served the message back to us. */
+  verified: z.boolean(),
+  createdAt: IsoDateTime,
+});
+export type AnchorSummary = z.infer<typeof AnchorSummary>;
+
+/** POST /evidence/anchor */
+export const AnchorRunResult = z.object({
+  /** Records that were waiting. Zero is a normal, successful outcome. */
+  recordsAnchored: z.number().int(),
+  anchor: AnchorSummary.nullable(),
+  /** False when the gateway is mocked, so nothing can be presented as public. */
+  broadcast: z.boolean(),
+});
+export type AnchorRunResult = z.infer<typeof AnchorRunResult>;
+
+/** One sibling on the path from a leaf to the root. */
+export const InclusionProofStep = z.object({
+  hash: Bytes32,
+  position: z.enum(["left", "right"]),
+});
+
+/**
+ * GET /evidence/:id/proof
+ *
+ * Everything a third party needs to check that this record was committed to
+ * before the consensus timestamp, without asking us again: the leaf, the
+ * siblings, the root, and the public URL of the message that root was published
+ * in. The verification itself is keccak256 and nothing else.
+ */
+export const InclusionProof = z.object({
+  evidenceRecordId: Uuid,
+  paymentRequestId: Uuid,
+  /** The record's payloadHash, which is the tree leaf. */
+  leaf: Bytes32,
+  /** Position in the ordered batch. */
+  index: z.number().int(),
+  steps: z.array(InclusionProofStep),
+  root: Bytes32,
+  anchor: AnchorSummary,
+  /**
+   * How to check it, stated in the response rather than in documentation
+   * somebody has to find. Prefixes are what stop an internal node posing as a
+   * leaf.
+   */
+  algorithm: z.object({
+    hash: z.literal("keccak256"),
+    leaf: z.literal("keccak256(0x00 || payloadHash)"),
+    node: z.literal("keccak256(0x01 || left || right)"),
+    oddNode: z.literal("promoted unchanged, never duplicated"),
+  }),
+});
+export type InclusionProof = z.infer<typeof InclusionProof>;

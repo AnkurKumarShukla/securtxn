@@ -123,6 +123,9 @@ protect B1, not to compete with it. → D20, D39
 - [x] Encrypted DOB, address and portrait; PAN stored only as a digest → D06
 - [x] 13 flow tests + 32 unit tests, driven through the real HTTP surface
 - [ ] **One** live consent run — needs a human at DigiLocker; auth header shape unconfirmed → D31
+      **CONFIRMED 2026-09-10: the demo runs this live, with a real user.** Not a fixture
+      replay and not the mock provider, so this path has to be exercised well before
+      demo day — it cannot be validated unattended.
 
 ## A4 · Identity → wallet binding
 
@@ -207,12 +210,25 @@ protect B1, not to compete with it. → D20, D39
 
 ### A9 · Web UI
 
-**SHRUNK to two screens (D39).** Everything else demos through Swagger; a
-half-built five-page dashboard costs B1 time and adds nothing to the pitch.
+**UN-SHRUNK.** D39 cut this to two screens to buy time for B1. That was
+overridden: a productionised UI is non-negotiable, and the demo is filmed
+through it rather than through Swagger. B1 shipped anyway.
 
+- [x] **Landing page** — product named **SecurTxn**; hero, problem, solution, how it works, footer → D53
+- [x] Tailwind v4 set up (CSS-only theme, no config file); one accent colour, colour reserved for meaning → D53
+- [x] React Bits vendored, not depended on: Prism (hero), CardNav (nav), LetterGlitch (security panel), ShinyText, CountUp, SpotlightCard → D53
+- [x] Hero cut to one heading and two lines; prism at its own defaults so the colour reads at full strength → D53
+- [x] Hero heading is plain white — no gradient over an already-colourful background → D53
+- [x] Nav is frosted glass over the prism: backdrop blur, saturation hold, lit top edge → D53
+- [x] Every upstream change marked ADAPTED in the file that carries it → D53
+- [x] Reduced motion honoured in CSS and in JS, so the page goes still rather than fast → D53
+- [x] Prism suspends its WebGL loop once scrolled past → D53
+- [x] Builds clean, prerenders static, 174 kB first load; one h1, four h2s
 - [ ] Approval screen — the one moment genuinely better seen than described
 - [ ] Evidence viewer — chain, verification result, break index
 - [ ] Copy says "a live human confirmed this action", not "identity verified"
+- [ ] **Launch App points at /payments, which is still a stub returning null** — the
+      landing page is finished, the app behind it is not
 - [-] Vendor onboarding form, AP dashboard, exception desk — Swagger is sufficient → D39
 
 ### A10 · Recipient ack + exception playbooks
@@ -252,6 +268,58 @@ half-built five-page dashboard costs B1 time and adds nothing to the pitch.
 - [x] No blank 200 routes exist; unimplemented paths raise `NotImplementedError` → 501 → D21
 - [x] Failure branches exercised by injection throughout → D21
 - [x] Tag the commit — the fallback demo if a partner integration regresses
+
+---
+
+### A13 · Consumer API surface — every user action has an endpoint → D51
+
+Chain operations existed only as scripts. A UI cannot run a script, so each one
+that a person or a scheduler triggers is now a route.
+
+**Issuer-scoped — the treasury operator drives these**
+
+- [x] `POST /securities` — deploys a bond through the ATS factory AND registers the platform as a trusted credential issuer, in one call → D51
+- [x] ISIN generated with a valid ISO 6166 check digit when omitted; the factory rejects a bad one → D51
+- [x] `GET /securities`, `GET /securities/:id`, `/events`, `/holdings` — holdings read from chain, confirmed wallets only
+- [x] `POST /securities/:id/mint` — to a CONFIRMED vendor wallet, or to the treasury to fund a payout → D51
+- [x] `POST /securities/:id/coupon` — refused when the execution date falls past maturity
+- [x] `PATCH /securities/:id/maturity` — compared against CHAIN time, not the server clock → D49
+- [x] `POST /securities/:id/redeem` — manual override; refused before maturity
+- [x] New `issuer` role with its own JWT secret: it cannot approve a payout, an approver cannot mint → D12, D51
+
+**Approver-scoped — the only routes that spend**
+
+- [x] `POST /payments/:id/settle` — DIRECT transfers, HTLC generates a secret and opens an escrow → D51
+- [x] Refused unless the payment is AWAITING_APPROVAL; an agent token cannot reach it
+- [x] `ledgerConfirmed: false` recorded, because no device confirmed it → D32
+- [x] `POST /payments/:id/settlement/refund/execute` — manual trigger, refused before the timelock
+
+**Payee-scoped — proven by signature, not by API token**
+
+- [x] `POST /payments/:id/settlement/secret` — EIP-712 `SecretRelease` from the payout address → D51
+- [x] Lock id is in the signed payload, so a signature cannot be replayed against the next escrow → D51
+- [x] Preimage stored AES-256-GCM encrypted, never in the settlement row and never in the evidence chain → D51
+
+**Backend-scheduled**
+
+- [x] `POST /settlement/sweep-refunds` — returns every expired escrow to its payer
+- [x] `POST /securities/sweep-maturity` — redeems every matured holding
+- [x] One failure never stops a sweep; every failure is reported, not swallowed
+
+**Verified**
+
+- [x] 37 new API tests against the mock chain gateway, which keeps real balances → D51
+- [x] Live run through the real HTTP routes on Hedera testnet: issue, mint, coupon, escrow, secret release, claim → D51
+      new bond `0x246840eabb0652e6e7b18536713600f979b4c1dc`, claim `0x22eb7d92…`, acknowledgment recorded as `HTLC_CLAIM`
+- [x] `pnpm --filter @cp/api smoke:chain` — a script, not a suite: it spends real gas → D51
+- [ ] Bridge broadcasts neither mode; its `local` transport still throws on the transfer it never implemented
+
+**Deployment**
+
+- [x] `CHAIN_GATEWAY` defaults to mock, so a checkout with real credentials cannot spend by accident → D21
+- [x] `.env.example` documents `sslmode=require`, `HOST=0.0.0.0`, and naming the exact frontend origin in CORS
+- [ ] Migrations still run by hand; a deploy needs `prisma migrate deploy` in its release step
+- [ ] Keystore path in the bridge does not exist on Railway or Render; a deployed signer needs the key from env or a KMS
 
 ---
 
@@ -314,17 +382,54 @@ partner on `main` turns a working demo into a broken one. → D20
 
 **Lifecycle — "real lifecycle management over a token with a name on it"**
 
-- [x] Mint + transfer lifecycle proven on testnet (`pnpm --filter @cp/contracts lifecycle`) → D46
-- [ ] `setCoupon` / `getAllCoupons` — optional extra, distribution
-- [ ] `redeemAtMaturityByPartition` — maturity settlement
-- [ ] HTLC settlement leg on Hedera (HSCS, EVM-compatible): claim-by-preimage doubles as the recipient acknowledgment; unclaimed refunds → D41
-- [ ] Settlement mode is per-payment `direct | htlc`, never a replacement for plain transfer → D41
+- [x] Mint → compliance-gated transfer → coupon → maturity → redemption, all on testnet → D46, D49
+- [x] `setCoupon` — corporate action; `rateStatus` must be SET for a standard-rate bond → D49
+- [x] `updateMaturityDate` + `redeemAtMaturityByPartition` — holding 300000 → 0, supply reduced → D49
+- [x] Every lifecycle role granted at deploy, so no follow-up grants are needed → D49
+- [x] Demo is idempotent: it revokes the counterparty's KYC first, so the rejection always happens → D49
+- [x] `PaymentHtlc.sol` — `lock` / `claim` / `refund`, no partial claims, no multi-hop, no cross-chain → D41, D50
+- [x] Compiled with solc 0.8.36, evm `paris`, optimizer 200; artifact committed as TypeScript, no build step → D50
+- [x] Deployed to Hedera testnet at `0x8ad684cff71aa37c7aa5a53b3a443dcd3e82285e` → D41
+- [x] Escrow granted KYC on the security — the compliance gate applies to contracts too → D50
+- [x] Claim restricted to the payee, and closed once the timelock passes, so claim and refund never overlap → D50
+- [x] Refund callable by anyone; funds only ever go to the recorded payer → D50
+- [x] Demo step 6: locked 5000 → wrong secret rejected → payee claimed, preimage on chain → D50
+- [x] Demo step 7: locked 2500 → early refund rejected → timelock passed → refunded, payee restored → D50
+- [x] Settlement mode is per-payment `DIRECT | HTLC`, DIRECT by default → D41, D50
+- [x] `POST /payments/:id/settlement/{lock,claim,refund}` + `GET .../settlement`; the API records, never broadcasts → D50
+- [x] Lock id re-derived server-side from the reported parameters; a mismatch is rejected → D50
+- [x] Claim preimage hashed against the stored hashlock before anything is written → D50
+- [x] A claim writes the recipient acknowledgment itself — `method = HTLC_CLAIM`, no signature asked for → D41, D50
+- [x] A refund opens a MISDIRECT exception case; the payment moves to EXCEPTION → D50
+- [x] Approver sees the settlement mode on the proposal, and the transport is told which shape it signs → D50
+- [x] 16 API settlement tests + 22 contract tests; full suites green (238 API, 33 contracts, 10 bridge)
 
-### B2 · Hedera — HCS evidence anchoring — *ungated*
+### B2 · Hedera — HCS evidence anchoring — *ungated* → D19, D52
 
-- [ ] `anchorEvidence` job — Merkle root over unanchored records → D19
-- [ ] Submit to HCS topic; `hcsAnchorTxId` backfilled onto every included record
-- [ ] Inclusion proof verifiable for a single record against the anchored root
+- [x] `POST /evidence/anchor` — Merkle root over every unanchored record → D19
+- [x] Submitted to topic `0.0.10454706`; `hcsAnchorTxId` AND the batch relation backfilled onto every record → D52
+- [x] `GET /evidence/records/:id/proof` — inclusion proof verifiable against the anchored root → D52
+- [x] `POST /evidence/anchors/:id/verify` — anchoring counts as done only once a mirror node serves it back → D52
+- [x] `GET /evidence/anchors` — published anchors, newest first
+
+**The Merkle layer** (`@cp/contracts`, 24 tests)
+
+- [x] Domain separation: leaves prefixed `0x00`, nodes `0x01`, so a node cannot pose as a leaf → D52
+- [x] Odd nodes promoted, never duplicated — duplication lets two leaf sets collide on one root → D52
+- [x] Proof steps carry a side; pairs are never sorted, because position is what the proof claims → D52
+- [x] Proof size stays logarithmic: 1000 records prove inclusion in 10 hashes
+
+**Verified**
+
+- [x] 14 API tests through HTTP against the mock consensus gateway
+- [x] A tampered record stops matching its anchored root, and the service refuses to ship the bad proof
+- [x] `pnpm --filter @cp/api smoke:anchor` — live run: root published, mirror node served it back, root recomputed by hand from the published algorithm and matched → D52
+- [x] Live topic: https://hashscan.io/testnet/topic/0.0.10454706
+
+**Fixed on the way**
+
+- [x] Empty env values now treated as unset — a deployment platform injects `KEY=` and an optional var with a format rule took the whole boot down → D52
+- [x] Consensus client closed on shutdown; without it the process never exits and a graceful stop hangs until SIGKILL → D52
 
 ### B3 · Ledger — real device — *DEFERRED: no hardware wallet in scope (D32)*
 

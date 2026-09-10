@@ -90,6 +90,7 @@ because it governs implementation. `build`: made while building.
 - `agent` and `approver` are mutually exclusive scopes enforced in middleware; a test asserts the 403
 - bridge imports nothing from `api` — HTTP only → no accidental in-process path to a key
 - each role verifies against its **own** JWT secret, so a wrong-role token fails signature verification (401) before any role string is compared — config rejects shared secrets at boot
+- **partly superseded by D51**: a consumer UI cannot drive a terminal, so the API now signs issuance, minting and settlement itself. What survives is role separation and the approval gate; what is gone is "the API process cannot move money"
 
 ### D13 · Transport is the only thing Speculos changes — `build`
 - `WALLET_CLI_TRANSPORT=usb|speculos` switches the target; code path identical
@@ -126,6 +127,7 @@ because it governs implementation. `build`: made while building.
 - Merkle root of unanchored records → HCS topic every ~15 min
 - per-record anchoring costs and rate-limits badly; a root proves inclusion for the whole batch
 - `hcsAnchorTxId` backfilled onto every included record
+- **built — see D52** for the Merkle choices, why verification is a separate step, and the two deployment bugs it surfaced
 
 ---
 
@@ -498,6 +500,7 @@ That is what "real lifecycle management over a token with a name on it" asks for
 - **deployed on Hedera** (HSCS is EVM-compatible), not Sepolia: one chain, one explorer, one narrative
 - **per-payment `settlementMode: direct | htlc`**, never a replacement. A plain transfer stays the default, so a vendor who will not claim still gets paid — and the demo shows both
 - scope is deliberately minimal: `lock` / `claim` / `refund`. No partial claims, no multi-hop, no cross-chain
+- **built, and one clause above is wrong** — the escrow wraps the payout leg, not `redeemAtMaturityByPartition`, which burns a holding and has no counterparty to claim. See D50 for that and the five other calls the build forced
 
 ### D42 · Split the ATS integration: browser SDK for issuance, headless ABI for KYC grants — `build`
 
@@ -1246,3 +1249,336 @@ factory, resolver, bond), so the only gap is a FUNDED Hedera account. Ours
 sign credentials but cannot pay gas. Until that is supplied, `grant-kyc` cannot
 broadcast here, and the honest claim is "the asset is live and verifiable; this
 repo reads it but does not yet write to it".
+
+### D57 · One lifecycle operation met the bar; it did not meet the brief — `build`
+
+The qualification bar says "at least one lifecycle operation", and mint plus a
+compliance-gated transfer satisfied it. The judging line says "real lifecycle
+management will be favoured over a token with a name on it" — and one transfer
+is thin against that. Stopping at the bar was the wrong call on the
+highest-priority track.
+
+`pnpm --filter @cp/contracts lifecycle` now runs the whole thing on testnet:
+
+```
+1. mint 500.00 units to the KYC-granted payee
+2. transfer to an unverified address        -> REJECTED on chain
+3. platform grants KYC to that address
+4. same transfer retried                    -> succeeds
+5. coupon scheduled                         -> corporate action, count 1 -> 2
+6. maturity moved forward, holding redeemed -> 300000 -> 0, supply reduced
+```
+
+Three contract behaviours that were not guessable:
+
+- **`rateStatus` must be `SET` (1), not `PENDING` (0)**, for a STANDARD-rate bond. `PENDING` is for a rate fixed later at the fixing date, and the contract rejects it at scheduling with `InterestRateIsStandard()`
+- **A maturity date must be strictly in the future.** `MaturityDateInvalid()` covers both directions — setting one in the past, and redeeming before it is reached — so the demo sets maturity just ahead and waits out **chain** time, which is what the contract compares against
+- **Every lifecycle role is now granted at deploy** (ISSUER, CORPORATE_ACTION, MATURITY_MANAGER, MATURITY_REDEEMER, plus the KYC and SSI ones), so a fresh security needs no follow-up grants
+
+**The demo is idempotent**, and that mattered: on a second run the counterparty
+still had KYC from the first, so the step-2 rejection silently did not happen
+and the script reported success anyway. It now revokes that KYC first. A demo
+that quietly stops demonstrating its own point is worse than one that fails.
+
+Related: the summary printed "yes" for coupon and redemption while neither had
+run, because one edit landed and another did not. Every summary line now reports
+an observed value — a count that increased, a holding that fell.
+### D58 · Building the HTLC settlement leg: six calls D41 did not anticipate — `build`
+
+D41 set the shape. These are the decisions that only appeared once it was on chain.
+
+**The escrow does NOT attach at `redeemAtMaturityByPartition`, as D41 said it
+would.** Redemption burns a holding back to the issuer — there is no second
+asset to escrow and no counterparty to claim. The receipt matters one step
+earlier, at the payout leg: the transfer to a payee. So the escrow wraps a
+transfer of the security, and redemption stays what it is. D41's instinct was
+right about *why*; it was wrong about *where*.
+
+**The escrow needs its own KYC on the security.** It holds the token while a
+lock is open, so it is a holder and the transfer rules apply to it. Every lock
+reverted until `deploy:htlc` granted it. Worth keeping as a demo beat rather
+than hiding: a contract that could hold a regulated security without being
+approved to would be a hole in the control, not a feature of it.
+
+**Claim is restricted to the payee, unlike a conventional HTLC.** The textbook
+version lets anyone push funds along once the preimage is public. Here the
+receipt property comes from *who signed the claim* — a relayed claim would move
+the money and prove nothing about the payee.
+
+**Claiming closes when the timelock passes.** Claim and refund are therefore
+never both available, and every lock ends in exactly one of two states. An
+evidence chain that could show both is an evidence chain nobody can read back.
+
+**Refund is callable by anyone; funds only ever go to the recorded payer.** The
+open caller cannot redirect anything, and recovery stops depending on the payer's
+key still working. Money stuck because one key went quiet is the failure this
+product exists to prevent — it would be absurd to reintroduce it in the recovery
+path.
+
+**One acknowledgment concept, two ways to produce it.** The HTLC claim writes to
+`RecipientAcknowledgment` with `method = HTLC_CLAIM`, alongside the EIP-712 rows.
+A dispute asks "did the payee acknowledge receipt", and the answer must not
+depend on which settlement mode was chosen. This forced `recipientSignature`
+nullable: there is no EIP-712 payload anywhere in the claim flow, and inventing
+one would make the record read like something it is not.
+
+**A refund opens a MISDIRECT exception.** The money coming back is the good
+outcome. A verified payee never collecting an approved payment is not — and
+nobody finds out from a balance quietly returning to normal.
+
+Three smaller ones:
+
+- **The lock id is re-derived server-side** from the reported parameters and a
+  mismatch is rejected. Needed `tokenAddress` and `onChainAmount` columns, since
+  the human amount and a token symbol are not enough to reproduce the hash. A
+  lock stored under an id the chain never issued is money nobody can find again
+- **`recommendSettlementMode` is advisory and sits outside `decide()`.** The
+  decision engine says whether money may move; this says how it should travel.
+  Folding them together would make an escrow read as an extra approval gate.
+  It recommends HTLC only for `NEW_OR_CHANGED_ADDRESS` — every check passed and
+  the only remaining risk is that the address is not who we think it is
+- **The compiled artifact is committed as TypeScript** (solc 0.8.36, evm `paris`,
+  optimizer 200 runs) rather than built on install. Every internal package here
+  is consumed as source; one contract should not impose a build order on the
+  workspace. `paris` because Hedera's EVM tracks upstream but not instantly, and
+  a single unsupported opcode is a bad thing to discover mid-demo
+
+**Proven on testnet, both branches**, in the same run as the ATS lifecycle:
+locked 5000 → a wrong secret rejected → payee claimed and the preimage is on
+chain; then locked 2500 → an early refund rejected → timelock passed → refunded,
+payee restored. Escrow: `0x8ad684cff71aa37c7aa5a53b3a443dcd3e82285e`.
+
+**Still not wired: the bridge does not broadcast either mode.** `local` transport
+has always thrown on the ERC-20 transfer it never implemented, so HTLC is not
+behind by comparison. The transport now receives `settlementMode` so the seam
+cannot silently send a plain transfer for a payment approved as an escrow —
+which would be the one failure worse than not sending at all.
+### D59 · The API can now move money, and that is a change of posture — `build`
+
+Chain operations lived in scripts. A consumer UI cannot run a script, so each
+one a person or a scheduler triggers became a route. Doing that required
+breaking a rule this codebase had held since D12, and it should be recorded as
+broken rather than quietly amended.
+
+**What survives, and what does not.** Autonomous code still cannot approve a
+payout: `/payments/:id/settle` is approver-scoped and refuses anything that is
+not AWAITING_APPROVAL. Role separation is still structural — each role verifies
+against its own secret, so an agent token presented to an issuer route fails the
+signature check before any role comparison runs, which is why it returns 401 and
+not 403. What is gone is "the API process cannot move money". It can. The honest
+statement is now: moving money requires an approver-scoped token and leaves an
+evidence record.
+
+**A fourth role, `issuer`, with its own secret.** Minting an instrument and
+releasing someone else's payout are different authorities. Folding issuance into
+`approver` would have meant one token that can both create value and send it.
+
+**Two keys, and the fallback is announced.** The issuer key mints; the treasury
+key spends. They are the same value in this demo, and the startup log says so —
+"the mint key also spends" is a deployment fact, not a detail to discover later.
+
+**`CHAIN_GATEWAY`, separate from `COMPLIANCE_GATEWAY`, and both default to mock.**
+KYC grants cost gas; these routes move value. A checkout with real credentials in
+`.env` must not be able to spend by accident (D21). The mock is not a no-op — it
+keeps balances in memory, so a mint really moves a balance and a lock really
+debits the treasury. What it deliberately does not simulate is the compliance
+gate: that is proven on the real chain (D46), and a fake version would only teach
+the suite to trust a rule it invented.
+
+**The secret is the escrow, so a role token cannot buy it.** For an HTLC payment
+the platform generates the preimage, publishes only its hash, and stores the
+secret AES-256-GCM encrypted. Releasing it on an API token would make the
+platform's own key sufficient to collect someone else's payment. Release requires
+an EIP-712 `SecretRelease` signed by the payout address, and the lock id is in the
+payload so a signature captured for one escrow cannot open the payee's next one.
+The preimage never enters the settlement row or the evidence chain before it is
+spent.
+
+**Amounts are human decimals; the scale is read from chain.** `decimals()` is
+queried, never assumed, and the conversion runs on strings. A UI that had to know
+the scale would eventually be wrong by two, which is the difference between
+paying a vendor and paying them a hundred times over.
+
+**Holders are named by wallet id, never by address.** Minting to an arbitrary
+address would route value past the whole confirmation pipeline (D01, D34). The one
+exception is `toTreasury`, which is how an instrument gets funded before it is
+paid out — without it the settle route had nothing to move.
+
+Three smaller calls:
+
+- **Issue and prepare are one call.** A security that exists but has no
+  registered credential issuer looks fine and rejects every KYC grant made
+  against it, surfacing much later as an unexplained revert during a payout (D40)
+- **A refund opens a MISDIRECT case, from both the manual route and the sweep.**
+  The money returning is the good outcome; a verified payee who never collected
+  an approved payment is not, and nobody learns that from a balance quietly
+  going back to normal
+- **Sweeps report failures instead of stopping.** One holder whose redemption
+  reverts must not leave every later holder unredeemed
+
+**Proven live, through the routes.** `pnpm --filter @cp/api smoke:chain` boots the
+real server against Hedera testnet and drives `POST /securities`, mint, coupon,
+`POST /payments/:id/settle`, the signed secret release, and the payee's own claim.
+It deployed bond `0x246840eabb0652e6e7b18536713600f979b4c1dc`, opened an escrow,
+and recorded the acknowledgment as `HTLC_CLAIM`. It is a script and not a suite
+because it spends real gas, and a suite that did this on every run is one bad
+merge from an expensive accident.
+
+**Still open.** The bridge broadcasts neither settlement mode — its `local`
+transport has always thrown on the ERC-20 transfer it never implemented, so the
+API is now ahead of it. Migrations run by hand and need `prisma migrate deploy`
+in a release step. The bridge reads its keystore from a file path that will not
+exist on Railway or Render.
+### D60 · Anchoring is only worth doing if someone else can check it — `build`
+
+D19 said to publish a Merkle root every fifteen minutes. Building it made clear
+what the root is actually for, and most of the decisions below follow from that
+one point.
+
+**The hash chain protects against a tamperer; it does not protect against us.**
+It proves nobody edited a record without editing every later one — to anyone who
+trusts our database. The chain and the records live in the same store we
+control, so it cannot rule out our rewriting the lot. A root on a public topic
+can: it fixes a 32-byte commitment at a consensus timestamp we cannot move.
+
+**So the inclusion proof is the deliverable, not the anchor.** Publishing is the
+easy half. `GET /evidence/records/:id/proof` returns a leaf, its siblings, the
+root, the public mirror-node URL of the message that root was published in, and
+the algorithm itself. Verifying needs keccak256 and nothing from this system. The
+algorithm is in the response body rather than in documentation somebody has to
+find, because a verifier who gets the prefixes or the odd-node rule wrong fails
+silently.
+
+**Three Merkle choices that are easy to get wrong, and all three are tested.**
+
+- **Domain separation.** Leaves hash with a `0x00` prefix, internal nodes with
+  `0x01`. Without it an attacker presents an internal node as a leaf and proves
+  inclusion of data that was never in the tree
+- **Odd nodes are promoted, not duplicated.** Bitcoin duplicates the last node,
+  which lets two different leaf sets produce the same root. Promotion, as in RFC
+  6962, has no such collision
+- **Pairs are never sorted.** Sorted pairs make proofs marginally smaller and
+  make a proof valid at more than one position. Position is precisely what an
+  inclusion proof claims, so each step carries a side instead
+
+**Batch order is part of the commitment.** Records order by `createdAt` then
+`id`, and that order is re-derived when a proof is built later. The tie-break on
+id is not cosmetic: two records written in the same transaction share a
+timestamp, and without it a proof would intermittently fail against a root that
+was perfectly correct.
+
+**Publish first, then write the database.** If the submission throws, nothing is
+marked anchored and the next run retries the same batch. The reverse order can
+mark records anchored against a message that never landed, and every inclusion
+proof built afterwards would point at nothing.
+
+**Verification is a separate step, and anchoring is not done without it.**
+Submitting is not publishing; a third party being able to read it is. `verify`
+fetches the message from a mirror node, checks the root matches what we recorded,
+and only then marks the anchor verified. It returns 409 while the message is
+still propagating, which takes a few seconds and is a wait rather than a failure.
+
+**A third gateway switch, mock by default.** `ANCHOR_GATEWAY` sits alongside
+`COMPLIANCE_GATEWAY` and `CHAIN_GATEWAY` because this is a third kind of write:
+not KYC, not value, but publishing a commitment. Mock by default so a test run
+never interleaves synthetic roots with real ones — a topic with test data mixed
+in is worse than one with gaps, since the topic's whole value is that everything
+on it is real. The mock keeps what it was given so the publish-read-verify round
+trip is testable, and its topic id is `0.0.0` so nothing can be mistaken for real.
+
+**No submit key on the topic.** Restricting submission would mean only we can
+write to it. The value here is public readability, not private writability, and
+our messages carry our payer account id either way.
+
+**Two bugs found by doing it, both deployment-relevant.**
+
+- **Empty environment values now count as unset.** Hosting platforms inject
+  `KEY=` for variables nobody set, and an empty string is not absent to Zod: an
+  optional field with a format rule fails on `""` and takes the whole boot down.
+  This is what one `.env` shape working both locally and on a platform that
+  pre-declares every key depends on
+- **The consensus client is closed on shutdown.** It holds open gRPC channels
+  that keep the event loop alive, so without the hook the process never exits, a
+  graceful stop hangs until the platform SIGKILLs it, and in-flight requests die
+  with it
+
+**Proven live.** `pnpm --filter @cp/api smoke:anchor` published a root to topic
+`0.0.10454706`, waited for a mirror node to serve it back, rebuilt the root by
+following the algorithm the proof response states, and matched it against the
+public message. No credentials on the read path.
+### D61 · React Bits is vendored, and the palette means something — `build`
+
+The landing page is the first thing anyone sees, including judges, so two
+choices are worth writing down.
+
+**React Bits components are copied in, not depended on.** That is how the
+library ships — source into your project, no package — and it matters here
+because every one of them needed changing. Each file carries the upstream URL
+and marks every edit `ADAPTED`, so the diff against upstream stays legible:
+
+- `"use client"` on all five. They touch WebGL, canvas, pointer and window, and
+  none can render on the server under the App Router
+- **Prism** reads `offset` through stable scalars. Upstream lists `offset?.x` in
+  the effect dependencies, which tears down and rebuilds the entire WebGL
+  context on every render when a caller passes an object literal
+- **LetterGlitch** has its props made optional. Upstream declares six of them
+  required despite giving every one a default, so it cannot be used the way its
+  own defaults intend without restating all six
+- **SpotlightCard** loses its hardcoded `neutral-900` surface, which fights any
+  palette but its own
+- **ShinyText** types its style as `MotionStyle`. Spreading `CSSProperties` into
+  motion fails under this workspace's `exactOptionalPropertyTypes`, and
+  narrowing one file beats relaxing the compiler for the whole app
+- **CardNav** inlines its one arrow glyph rather than importing `react-icons`,
+  takes its call-to-action label and destination as props instead of hardcoding
+  a "Get Started" button that goes nowhere, routes internal links through
+  `next/link` so in-app navigation is not a full document load, and gains a
+  `glass` prop. Upstream paints a flat colour; `glass` adds a backdrop blur, a
+  hairline edge and a lit top rim so the prism shows through softened instead of
+  being covered. It is off by default, so upstream's look is still what you get
+  without asking. Three details make it read as a pane rather than a tint:
+  `backdrop-saturate` keeps colour behind the glass from going grey once
+  blurred, an inset top highlight gives it an edge, and the cards blur *less*
+  than the bar — matching it flattens the two into one surface. The call to
+  action stays fully opaque, because the one thing on a nav that should not
+  recede is the way into the product
+
+**The hero says one thing.** First pass carried a badge, a two-clause headline,
+a paragraph, and a three-figure stat strip. All of it was true and all of it had
+a section of its own further down, so above the fold it was just a longer fold.
+It is now a heading, two lines, and two buttons. The headline is plain white:
+a gradient over an already-colourful render is two things competing for the same
+attention, and the render wins.
+
+The prism runs at its own defaults rather than the muted, hue-shifted settings
+of the first pass. Those made it belong to the palette and also made it barely
+visible, which is a poor trade for the one piece of artwork on the page. The
+scrims are now two light passes that exist to hold the type legible, not to dim
+the render.
+
+**CardNav sits inside the hero, and scrolls away with it.** That is upstream's
+design — it positions absolutely, not fixed — and it needs the hero as its
+containing block to sit over the prism rather than over the top of the document.
+A one-word change makes it sticky if that turns out to matter.
+
+**Colour is reserved, not decorative.** One cool blue for anything actionable,
+one green that only ever means verified, one red that only ever means blocked,
+and near-black for everything else. A control layer in front of other people's
+money should read as calm and deliberate; if green appeared as decoration it
+would stop meaning "this passed" everywhere else in the product.
+
+The prism is hue-shifted into that same blue rather than left rainbow, so the
+artwork belongs to the palette instead of competing with it, and it suspends its
+render loop once scrolled past — it is a hundred-step raymarch per frame and has
+no business heating a laptop it is no longer visible on.
+
+**Reduced motion is handled twice.** Once in CSS for transitions, and once in JS
+inside the scroll reveal, because a CSS rule that shortens a duration still
+plays the movement. Anyone who asked their system to stop animation gets a still
+page, not a faster one.
+
+**The page states nothing it cannot back.** The three hero figures are product
+facts, not market statistics: three gates before an address is payable, zero
+payouts an autonomous agent can release, twenty-four hours to recover a
+misdirected one. Inventing an industry number would have been easy and would
+have been the one thing on the page nobody could check.

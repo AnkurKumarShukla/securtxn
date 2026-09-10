@@ -214,3 +214,63 @@ export async function verifyAcknowledgment(input: {
     signature: input.signature as Hex,
   });
 }
+
+// --- escrow secret release -------------------------------------------------
+
+/**
+ * Proof that the caller controls the payout address, before the secret is handed over.
+ *
+ * The preimage IS the escrow. Anyone holding it can claim the funds, so
+ * releasing it on a role token alone would mean the platform's own API key is
+ * enough to collect someone else's payment. The payee signs this from the same
+ * address the money is locked for, and the signature must recover to it.
+ *
+ * `lockId` is in the payload so a signature captured for one escrow cannot be
+ * replayed to open the next one for the same payee.
+ */
+export const SECRET_RELEASE_TYPES = {
+  SecretRelease: [
+    { name: "paymentRequestId", type: "string" },
+    { name: "recipientAddress", type: "address" },
+    { name: "lockId", type: "bytes32" },
+    { name: "statement", type: "string" },
+  ],
+} as const;
+
+export const SECRET_RELEASE_STATEMENT = "I am the payee and I am collecting this payment.";
+
+export type SecretReleaseMessage = {
+  paymentRequestId: string;
+  recipientAddress: Address;
+  lockId: Hex;
+  statement: string;
+};
+
+export function buildSecretReleaseMessage(input: {
+  paymentRequestId: string;
+  recipientAddress: string;
+  lockId: string;
+}): SecretReleaseMessage {
+  return {
+    paymentRequestId: input.paymentRequestId,
+    recipientAddress: input.recipientAddress as Address,
+    lockId: input.lockId as Hex,
+    statement: SECRET_RELEASE_STATEMENT,
+  };
+}
+
+export async function verifySecretRelease(input: {
+  chainId: number;
+  address: string;
+  signature: string;
+  message: SecretReleaseMessage;
+}): Promise<boolean> {
+  return verifyTypedData({
+    address: input.address as Address,
+    domain: domainFor(input.chainId),
+    types: SECRET_RELEASE_TYPES,
+    primaryType: "SecretRelease",
+    message: input.message,
+    signature: input.signature as Hex,
+  });
+}

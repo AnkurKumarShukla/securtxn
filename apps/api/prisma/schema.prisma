@@ -37,6 +37,51 @@ enum PaymentStatus {
   EXCEPTION
 }
 
+/// A tokenized instrument's state. MATURED is terminal for new issuance
+/// activity: a matured bond takes no new coupons, only redemptions.
+enum SecurityStatus {
+  ISSUED
+  MATURED
+}
+
+/// What happened to a security. One row per confirmed on-chain operation, so
+/// the UI can show a history without replaying the chain.
+enum SecurityEventKind {
+  ISSUED
+  PREPARED
+  MINTED
+  TRANSFERRED
+  COUPON_SET
+  MATURITY_UPDATED
+  REDEEMED
+}
+
+/// How a payment settles. Per payment, never a global switch (D41).
+///
+/// DIRECT is a plain transfer and stays the default: a payee who will not or
+/// cannot claim still gets paid. HTLC routes the same payment through a hashed
+/// timelock escrow, so the payee must reveal a secret to take the funds and
+/// anything unclaimed returns to the payer.
+enum SettlementMode {
+  DIRECT
+  HTLC
+}
+
+/// One escrow's lifecycle. CLAIMED and REFUNDED are mutually exclusive on
+/// chain — the contract closes claiming the moment the timelock passes.
+enum HtlcStatus {
+  LOCKED
+  CLAIMED
+  REFUNDED
+}
+
+/// How a recipient acknowledged receipt. Two routes to the same fact: one is
+/// asked for after the money moves, the other falls out of collecting it.
+enum AcknowledgmentMethod {
+  EIP712_SIGNATURE
+  HTLC_CLAIM
+}
+
 enum ExceptionType {
   OVERPAY
   MISDIRECT
@@ -114,6 +159,7 @@ model EncryptedBlob {
 
   vendorPhotos    Vendor[]
   acknowledgments RecipientAcknowledgment[]
+  htlcPreimages   HtlcSettlement[]
 
   @@index([kind])
 }
@@ -123,6 +169,9 @@ enum BlobKind {
   IDENTITY_PHOTO
   /// Raw context behind a recipient acknowledgment commitment.
   ACK_CONTEXT
+  /// The secret a payee must reveal to claim an escrow. Encrypted at rest and
+  /// released only to the payee, because anyone holding it can take the money.
+  HTLC_PREIMAGE
 }
 
 model Vendor {
@@ -314,6 +363,10 @@ model PaymentRequest {
   network                 String
   senderContextCommitment String // keccak256 hash, see §4.8
 
+  /// Chosen when the payment is raised, not when it is sent. The approver sees
+  /// the mode on the proposal, and the mode is part of what they approve.
+  settlementMode SettlementMode @default(DIRECT)
+
   decision           PaymentDecision?
   decisionReasonCode String?
   matchScore         Float?
@@ -325,6 +378,7 @@ model PaymentRequest {
   proposal        Proposal?
   approvalEvent   ApprovalEvent?
   recipientAck    RecipientAcknowledgment?
+  htlcSettlement  HtlcSettlement?
   exceptionCase   ExceptionCase?
   evidenceRecords EvidenceRecord[]
 
@@ -381,11 +435,152 @@ model RecipientAcknowledgment {
   paymentRequestId       String         @unique
   paymentRequest         PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
   recipientAddress       String
-  recipientSignature     String // EIP-712 sig over recipientCommitment
-  recipientCommitment    String // keccak256 hash of raw context, see §4.8
+
+  /// DEVIATION from §3, which assumes a signature is always present. It is not:
+  /// an HTLC claim acknowledges receipt by revealing a secret in a transaction
+  /// the payee signed, and there is no EIP-712 payload anywhere in that flow.
+  /// Forcing a value here would mean inventing one (D41).
+  method             AcknowledgmentMethod @default(EIP712_SIGNATURE)
+  recipientSignature String? // EIP-712 sig over recipientCommitment; null for HTLC_CLAIM
+  /// The claim transaction, for HTLC_CLAIM. Null for a signed acknowledgment.
+  claimTxHash        String?
+
+  recipientCommitment    String // keccak256 hash of raw context, or the hashlock the payee opened
   rawContextEncryptedRef String? // -> EncryptedBlob.id
   rawContextBlob         EncryptedBlob? @relation(fields: [rawContextEncryptedRef], references: [id], onDelete: Restrict)
   verifiedAt             DateTime       @default(now())
+}
+
+/// A tokenized receivable issued through the ATS factory.
+///
+/// DEVIATION: not in §3, which predates issuance being a product action rather
+/// than a deploy script. The row is the platform's index into the chain: the
+/// EVM address is authoritative, and everything else here is a cached copy of
+/// what was minted so a list screen does not need a mirror-node round trip per
+/// row.
+model Security {
+  id String @id @default(uuid())
+
+  /// Authoritative identity. Hedera also assigns a 0.0.x id, kept when known
+  /// because that is what HashScan links and what an operator recognises.
+  evmAddress String  @unique
+  hederaId   String?
+
+  name     String
+  symbol   String
+  isin     String
+  decimals Int    @default(2)
+  currency String @default("USD")
+
+  /// Face value per unit, at nominalValueDecimals precision.
+  nominalValue         Decimal @db.Decimal(38, 18)
+  nominalValueDecimals Int     @default(2)
+  /// Cap in base units, as a string: uint256 does not fit any numeric column.
+  maxSupply            String
+
+  startingDate DateTime
+  maturityDate DateTime
+  status       SecurityStatus @default(ISSUED)
+
+  /// True once the operator is a credential issuer the token trusts. Without
+  /// it every grantKyc against this security reverts (D40).
+  issuerRegistered Boolean @default(false)
+
+  deployTxHash String
+  /// Who issued it, from the issuer token that made the call.
+  issuedBy     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events SecurityEvent[]
+
+  @@index([status])
+}
+
+/// One confirmed lifecycle operation on a security.
+///
+/// Append-only, like the evidence chain and for the same reason: this is the
+/// record a reader consults to answer "what was done to this instrument, and
+/// by whom". A revisable history answers nothing.
+model SecurityEvent {
+  id         String   @id @default(uuid())
+  securityId String
+  security   Security @relation(fields: [securityId], references: [id], onDelete: Restrict)
+
+  kind   SecurityEventKind
+  txHash String
+  /// The issuer-token subject that triggered it.
+  actorId String
+
+  /// Operation-specific fields: the holder and amount for a mint, the rate and
+  /// dates for a coupon. Json because the shape genuinely differs per kind, and
+  /// seven nullable column groups would describe the union worse.
+  detail Json
+
+  createdAt DateTime @default(now())
+
+  @@index([securityId, createdAt])
+}
+
+/// One HTLC escrow, mirrored from chain.
+///
+/// DEVIATION: not in §3 — §3 predates the settlement leg. Kept separate from
+/// PaymentRequest rather than adding six nullable columns to it, because these
+/// fields exist for exactly the payments that opted in, and a table that is
+/// mostly null on most rows stops describing anything. It also keeps the
+/// payment status machine intact: LOCKED/CLAIMED/REFUNDED are facts about an
+/// escrow, not about whether a payment was approved and sent.
+///
+/// Nothing here is ever written by this service to a chain. Rows record
+/// transactions the bridge already broadcast (D12).
+model HtlcSettlement {
+  id               String         @id @default(uuid())
+  paymentRequestId String         @unique
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+
+  escrowAddress String
+  /// Derived by the contract from every other field. Re-derived on write, so a
+  /// row can always be found on chain.
+  lockId        String @unique
+  /// keccak256 of the payee's secret. The secret is never stored before it is
+  /// spent — it is the only thing standing between anyone and the escrow.
+  hashlock      String
+  timelock      DateTime
+  payerAddress  String
+  payeeAddress  String
+  /// The token contract the escrow holds. Needed to re-derive the lock id, and
+  /// it is what a reader follows to find the transfer on an explorer.
+  tokenAddress  String
+  amount        Decimal @db.Decimal(38, 18)
+  /// The same amount in the token's base units, as the chain saw it. Kept
+  /// alongside the human figure rather than derived from it: deriving needs the
+  /// token's decimals, and a wrong guess there is a wrong lock id.
+  onChainAmount String
+
+  status HtlcStatus @default(LOCKED)
+
+  lockTxHash   String
+  claimTxHash  String?
+  refundTxHash String?
+  /// Set on claim. Public by then, and it is the receipt itself.
+  preimage     String?
+
+  /// The secret BEFORE it is spent, encrypted at rest -> EncryptedBlob.id.
+  ///
+  /// Held rather than discarded because the payee has to be given it, and only
+  /// after they prove control of the payout address. Anyone holding this can
+  /// claim the escrow, so it never appears in a list response and never in the
+  /// evidence chain — only the hashlock does.
+  preimageEncryptedRef String?
+  preimageBlob         EncryptedBlob? @relation(fields: [preimageEncryptedRef], references: [id], onDelete: Restrict)
+  preimageReleasedAt   DateTime?
+
+  lockedAt  DateTime  @default(now())
+  settledAt DateTime?
+
+  @@index([status])
+  @@index([timelock]) // sweeping for locks that are now refundable
 }
 
 model ExceptionCase {
@@ -427,6 +622,16 @@ model EvidenceRecord {
   hcsAnchorTxId      String? // filled in by the batch anchoring job, see §4.8
   createdAt          DateTime @default(now())
 
+  /// The batch whose Merkle root was published to the consensus topic.
+  ///
+  /// Both this and hcsAnchorTxId are set together and describe the same fact.
+  /// The transaction id is kept because §3 names it and because it is what a
+  /// person pastes into an explorer; the relation is kept because rebuilding a
+  /// batch to produce an inclusion proof needs the sibling records, and finding
+  /// them by a string would be a scan.
+  anchorId String?
+  anchor   EvidenceAnchor? @relation(fields: [anchorId], references: [id], onDelete: Restrict)
+
   // DEVIATION: §3 ordered the chain by createdAt alone. Two records written in
   // the same transaction can share a timestamp, which makes the order — and so
   // the chain — ambiguous. Uniqueness on the link instead means the chain is
@@ -435,6 +640,8 @@ model EvidenceRecord {
   // discovered during verification.
   @@unique([paymentRequestId, previousRecordHash])
   @@index([paymentRequestId, createdAt])
+  /// The anchoring job's working set: everything not yet published.
+  @@index([anchorId])
   @@index([hcsAnchorTxId]) // the anchoring job scans for NULL
 }
 
@@ -549,4 +756,48 @@ enum WorldIdPurpose {
   ENROLLMENT
   /// Any later proof of "still the same human".
   REVERIFICATION
+}
+
+/// One batch of evidence records, committed to by a single Merkle root that was
+/// published to a Hedera consensus topic.
+///
+/// DEVIATION: not in §3, which mentions only `hcsAnchorTxId` on each record.
+/// A root, a record count and a sequence number are facts about the BATCH, and
+/// copying them onto every member would mean the same values repeated across
+/// hundreds of rows with nothing keeping them equal.
+///
+/// WHY THIS TABLE MATTERS. The hash chain proves nobody edited our records
+/// without also editing every later one. It does not prove we did not rewrite
+/// the whole chain, because the chain and the records share a database we
+/// control. A root on a public topic does: it fixes a 32-byte commitment at a
+/// consensus timestamp we cannot move (D19).
+model EvidenceAnchor {
+  id String @id @default(uuid())
+
+  /// keccak256 Merkle root over the batch's payload hashes, 0x-prefixed.
+  merkleRoot  String @unique
+  recordCount Int
+
+  topicId String
+  /// Ordinal position in the topic. Cite this to fetch the message back.
+  sequenceNumber Int
+  /// Network consensus time, not our clock. This is the fact being anchored.
+  consensusTimestamp String
+  transactionId      String
+
+  /// Public mirror-node URL for the message. Stored so a verifier is handed a
+  /// link rather than told to construct one.
+  messageUrl String
+
+  /// False until the mirror node has served the message back. Anchoring is not
+  /// finished when we submit it; it is finished when a third party can read it.
+  verified   Boolean   @default(false)
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  records EvidenceRecord[]
+
+  @@unique([topicId, sequenceNumber])
+  @@index([createdAt])
 }
