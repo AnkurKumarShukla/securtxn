@@ -265,6 +265,9 @@ partner on `main` turns a working demo into a broken one. → D20
 **Qualification bars — all four are mandatory, all four are at zero:**
 
 - [x] Use ATS to issue or manage a tokenised asset — bond `0.0.10444329` issued via the factory
+- [x] **On-chain deployment now VERIFIED BY THE SUITE, not just by hand** → D56. `packages/contracts/test/onchain.test.ts` (10 tests) re-queries the public Hedera mirror node: contracts exist and are not deleted, the bond's `created_timestamp` still matches (a swapped contract is caught, not just a missing one), mint/transfer/approve are present, and the compliance revert is there. Read-only, no key needed — a judge can run it
+- [x] Public ATS infrastructure filled into `.env` (RPC relay, mirror node, factory, resolver, bond id), so the only remaining gap is a funded account
+- [ ] **A FUNDED Hedera account** — ours (`0x7b83c510…`) is not one, so the API still resolves `complianceGateway: "mock"` and `grant-kyc` cannot broadcast here. Ask Arunava for `ATS_ISSUER_ACCOUNT_ID` + key, or create a free one at portal.hedera.com
 - [x] Deploy and demonstrate on Hedera **testnet** — issuance + KYC grant both landed
 - [ ] Public GitHub repo; contracts verified on **HashScan** where applicable
 - [ ] Demo video **≤5 min**: issuance + configuration + ≥1 lifecycle operation

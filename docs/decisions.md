@@ -1209,3 +1209,40 @@ channel feeding it. So:
 Verified end to end: TLS 1.3 negotiated, plaintext refused on the TLS port,
 `curl` succeeds against the CA without `-k`, the bridge works with the CA and
 fails without it.
+
+### D56 · The contract suite tested the mock, not the chain — `build`
+
+`packages/contracts` had 11 green tests. Every one of them asserted an ABI shape
+or exercised `MockComplianceGateway`; not one touched Hedera. So `pnpm test`
+proved the mock worked and said nothing about the on-chain integration — while
+looking, to anyone reading the output, like it proved both. That is D44's
+failure mode again, and in the track carrying the largest weighting.
+
+The deployment was real — confirmed by querying the public mirror node directly:
+bond `0.0.10444329` = `0x8418e766…`, not deleted, 23 successful calls including
+mint / transfer / approve, and **two reverts**. But that proof lived in a chat
+message, not in the repo, and nothing would notice if it stopped being true.
+
+**Fix**: `test/onchain.test.ts` re-queries the public mirror node and asserts the
+deployment recorded in `fixtures/hedera/deployment.json` still holds — the
+contracts exist, the bond's `created_timestamp` still matches (so a swapped
+contract is caught, not just a missing one), mint/transfer/approve are present,
+and a revert whose error data begins `0x1c94559c` is there.
+
+That last assertion is the one worth having. **The compliance gate refusing a
+transfer on-chain is the only evidence that the restriction is enforced by the
+contract rather than by our application politely declining** (D53). It cannot be
+demonstrated from inside our own code at all.
+
+**Deliberately fails rather than skips when the mirror node is unreachable.** A
+suite that quietly skips its only real check would report "on-chain verified" on
+a laptop with no network. Read-only, no key, no account, no broadcast — a judge
+can run it.
+
+**Still not closed**: in THIS repo the API resolves `complianceGateway: "mock"`.
+The public infrastructure values are now in `.env` (RPC relay, mirror node,
+factory, resolver, bond), so the only gap is a FUNDED Hedera account. Ours
+(`0x7b83c510…`) is not one — the mirror node returns "Not found" — so it can
+sign credentials but cannot pay gas. Until that is supplied, `grant-kyc` cannot
+broadcast here, and the honest claim is "the asset is live and verifiable; this
+repo reads it but does not yet write to it".

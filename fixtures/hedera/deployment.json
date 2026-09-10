@@ -1,0 +1,34 @@
+{
+  "description": "On-chain facts about the ATS deployment, verified against the public Hedera testnet mirror node. This file is the ORACLE for onchain.test.ts: the test re-queries the live mirror node and asserts these values still hold.",
+  "network": "hedera-testnet",
+  "chain_id": 296,
+  "mirror_node": "https://testnet.mirrornode.hedera.com/api/v1",
+  "explorer": "https://hashscan.io/testnet",
+  "verified_at": "2026-09-10",
+  "contracts": {
+    "resolver": { "id": "0.0.9212226" },
+    "factory": { "id": "0.0.9213391", "evm_address": "0xd1f118a40f3b02883d35909ef2517e7edd78379d" },
+    "bond": {
+      "id": "0.0.10444329",
+      "evm_address": "0x8418e76609e60e16dfa22722e707381da9b9173a",
+      "created_timestamp": "1788976157.407359165",
+      "note": "Issued through the ATS factory. This is the asset the B1 track is judged on."
+    }
+  },
+  "expected_activity": {
+    "note": "The bond was not merely deployed — it was exercised. Selectors observed in its call history.",
+    "min_successful_calls": 20,
+    "min_reverted_calls": 1,
+    "selectors": {
+      "0x40c10f19": "mint(address,uint256)",
+      "0xa9059cbb": "transfer(address,uint256)",
+      "0x095ea7b3": "approve(address,uint256)"
+    },
+    "compliance_revert": {
+      "note": "The compliance gate refusing a transfer on-chain (D53). This reverting call is the proof that the gate is enforced by the contract, not by our application.",
+      "timestamp": "1788981457.605742174",
+      "selector": "0xb16fd0cc",
+      "error_prefix": "0x1c94559c"
+    }
+  }
+}
