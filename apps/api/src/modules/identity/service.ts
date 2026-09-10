@@ -11,6 +11,7 @@
 import { randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { CompleteIdentityResponse, DocType, VerificationTier } from "@cp/shared-types";
+import { canonicalEntityName } from "@cp/cre-workflows";
 import type { Config } from "../../config/index.js";
 import { ConflictError, NotFoundError, UnprocessableError } from "../../lib/errors.js";
 import { encrypt, encryptJson, hmac } from "../../lib/crypto.js";
@@ -130,6 +131,23 @@ export class IdentityService {
             ? hmac(identity.taxId, this.deps.config.HMAC_PEPPER)
             : null,
           panVerifiedOn: now,
+
+          // The name digest the payment match compares against (D62).
+          //
+          // Hashed from the DIGILOCKER-VERIFIED name, not the self-declared one
+          // captured at vendor creation — a payee could type anything there, and
+          // the whole value of the check is that both sides are compared against
+          // something a government issuer attested.
+          //
+          // canonicalEntityName strips corporate suffixes and sorts the tokens,
+          // so "Meridian Components Pvt Ltd" and "MERIDIAN COMPONENTS PRIVATE
+          // LIMITED" reduce to one string and therefore one digest. Null when
+          // nothing distinguishing survives ("Private Limited" alone), which
+          // fails the match closed rather than matching everything.
+          legalNameHmac: (() => {
+            const canonical = canonicalEntityName(identity.legalName);
+            return canonical ? hmac(canonical, this.deps.config.HMAC_PEPPER) : null;
+          })(),
 
           idDocumentType: "DIGILOCKER_AADHAAR",
           // Signed over by the IdentityBinding attestation (D03); the raw

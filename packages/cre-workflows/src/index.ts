@@ -8,7 +8,7 @@
 // instead (see ./cre/index.ts), which is an opt-in, not an ambient cost.
 
 export { FallbackVendorMatcher, MATCH_REASONS } from "./fallback/FallbackVendorMatcher.js";
-export { nameSimilarity, normaliseEntityName } from "./scoring/index.js";
+export { canonicalEntityName, nameSimilarity, normaliseEntityName } from "./scoring/index.js";
 
 export type {
   VendorMatcher,

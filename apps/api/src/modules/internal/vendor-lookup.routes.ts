@@ -19,7 +19,16 @@ import { z } from "zod";
 const Params = z.object({ vendorId: Uuid });
 
 const VendorLookupResponse = z.object({
-  legalName: z.string(),
+  /**
+   * DIGESTS, never names (D62). The enclave has no crypto, so it compares
+   * HMACs rather than decrypting anything — which also means no plaintext
+   * identity ever crosses into it, or over this wire.
+   *
+   * Null when the payee has nothing on file. That is a REFUSAL downstream, not
+   * a wildcard: evaluateMatch treats a null digest as "cannot agree".
+   */
+  legalNameHmac: z.string().nullable(),
+  panNumberHmac: z.string().nullable(),
   wallets: z.array(
     z.object({
       address: z.string(),
@@ -44,9 +53,9 @@ export const vendorLookupRoutes: FastifyPluginAsyncZod = async (app) => {
         summary: "Vendor name and registered wallets, for the vendor match",
         description:
           "Called by the CRE confidential workflow from inside the enclave, and by " +
-          "the fallback matcher in-process. Returns only what a match needs: legal " +
-          "name and registered wallets. 404 means no such vendor, which the caller " +
-          "maps to VENDOR_NOT_FOUND.",
+          "the fallback matcher in-process. Returns only what a match needs: identity " +
+          "DIGESTS and registered wallets — never a name or a PAN. 404 means no such " +
+          "vendor, which the caller maps to VENDOR_NOT_FOUND.",
         security: [{ bearerAuth: [] }],
         params: Params,
         response: { 200: VendorLookupResponse },
@@ -56,9 +65,8 @@ export const vendorLookupRoutes: FastifyPluginAsyncZod = async (app) => {
       const vendor = await app.prisma.vendor.findUnique({
         where: { id: request.params.vendorId },
         select: {
-          legalEntityName: true,
-          legalFirstName: true,
-          legalLastName: true,
+          legalNameHmac: true,
+          panNumberHmac: true,
           wallets: {
             // Only CONFIRMED wallets are payout addresses. A pending or revoked
             // wallet must not satisfy a match — that is the same fail-closed
@@ -71,14 +79,11 @@ export const vendorLookupRoutes: FastifyPluginAsyncZod = async (app) => {
 
       if (!vendor) return reply.callNotFound();
 
-      // An individual has no entity name; a business has no first/last. Either
-      // way the matcher compares one string, so the shape is resolved here
-      // rather than pushed into the enclave.
-      const legalName =
-        vendor.legalEntityName ??
-        [vendor.legalFirstName, vendor.legalLastName].filter(Boolean).join(" ");
-
-      return { legalName, wallets: vendor.wallets };
+      return {
+        legalNameHmac: vendor.legalNameHmac,
+        panNumberHmac: vendor.panNumberHmac,
+        wallets: vendor.wallets,
+      };
     },
   );
 };

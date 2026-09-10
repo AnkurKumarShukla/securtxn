@@ -27,6 +27,20 @@ beforeAll(async () => {
     ...base,
     NODE_ENV: "test",
     isProduction: false,
+    // Pinned, not inherited. The deployed default is `cre`, and letting the
+    // suite pick that up would drive every test through a live DON and a
+    // public tunnel — slow, flaky, and dependent on a Vault secret that
+    // expires. The fallback exists precisely so the tests do not need an
+    // enclave (D09), and one shared contract suite proves the two agree.
+    VENDOR_MATCHER: "fallback",
+    // Pinned for the same reason as VENDOR_MATCHER: the deployed default now
+    // talks to Hedera testnet, and a unit suite must not depend on a public
+    // network being up. The on-chain branch is covered by decision.test.ts.
+    COMPLIANCE_GATEWAY: "mock",
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock",
     RATE_LIMIT_MAX: 1_000_000,
   };
   app = await buildServer(config);

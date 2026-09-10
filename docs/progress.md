@@ -529,3 +529,122 @@ reprioritization and stands regardless of sequencing:
 with ~12h expiry, since the workflow sends the Vault secret as the Bearer token
 the lookup endpoint authenticates. Simulations 401 once it lapses — re-mint via
 `POST /dev/token`.
+
+---
+
+## Track C — Wiring the flow (D62–D66)
+
+Three sponsor integrations were built, tested and verified against the real
+services, and none of them was load-bearing at runtime. A judge reading the repo
+found three working integrations bolted to a payment flow that used none — for
+Chainlink that is a stated disqualifier (requirement #4 rejects "an isolated
+example that does not contribute to the application").
+
+The goal of this track: **one payment cannot complete without passing through
+all of them.**
+
+### C1 · Digest matching (D62)
+
+- [x] `canonicalEntityName()` — dedupe, sort, join. Sorting preserves the set
+      semantics the old Sørensen–Dice comparison had; without it, "Components
+      Meridian Pvt Ltd" would stop matching "Meridian Components Pvt Ltd"
+- [x] `evaluateMatch()` rewritten: wallet checked **first and exactly**, then
+      both digests. One reason code for any identity mismatch — per-field would
+      give a prober a second bit
+- [x] A null digest on the **record** is a refusal, not a wildcard. "We have no
+      data" must not be indistinguishable from "the data agrees"
+- [x] The sender's claim is carried on the payment (`claimedPayeeNameHmac`,
+      `claimedPayeePanHmac`) instead of being derived from the payee's own
+      record — the old code compared a record to itself, so the identity check
+      **could never fail**
+- [x] Fallback moved to digests too, so D09's shared contract suite still proves
+      something about the CRE path
+
+### C2 · Payee consent — P3/P4 (D63)
+
+- [x] `POST /payments/:id/request-consent`, `GET …/consent-prompt`,
+      `POST …/consent`, notifications, identity blocks
+- [x] EIP-712 `PayeeConsent` signed by the **confirmed payout address**, with
+      `amount`, `token` and `invoiceRef` inside the signed payload
+- [x] `runDecision` refuses without an `ACCEPTED` consent — in the service, not
+      the route, so a second caller cannot skip it
+- [x] A denial goes to `EXCEPTION`, never back to `DRAFT`
+- [x] The `/consent` route is deliberately **unauthenticated**: the signature is
+      the authorisation, and issuing a payee an agent token so they could refuse
+      a payment would hand them the rest of the API with it
+- [x] 22 tests: forged signer, foreign signature, wrong amount, wrong payment,
+      double decision, signed denial, blocked payer, mismatch alert
+
+### C3 · World ID becomes structural (D64)
+
+- [x] **Sender, every payment (P2)** — `request-consent` refuses until a
+      REVERIFICATION exists for that payer and that payment id
+- [x] **Payee, on risk (P5)** — `modules/consent/challenge.ts`, pure, 10 tests
+- [x] The verification is **validated, not merely present**: signal, purpose and
+      subject. The sender's own P2 check passes the first two and fails the
+      third — the substitution the subject check exists to catch
+- [x] `world_id_check` evidence for both parties, and the nullifier is **never**
+      written into the chain
+
+### C4 · Hedera gates the decision (D65)
+
+- [x] `ONCHAIN_KYC_NOT_GRANTED` — `getKycStatusFor` on the bond, read during
+      `runDecision`. It was dead code with no callers before this
+- [x] REVERIFY, not DO_NOT_SEND — a missing grant means "could not confirm"
+- [x] Self-disables with a mock gateway: the mock reads NOT_GRANTED for every
+      address that never went through `/grant-kyc`, so enforcing it there would
+      block every payment on an in-memory map
+- [x] `COMPLIANCE_GATEWAY=ats` is now the shipped default, and the server boots
+      clean with it
+- [x] **Verified the read actually discriminates**, which is the only thing that
+      makes this a control rather than a constant. Against the live bond
+      `0.0.10444329` on testnet:
+
+      | account | `getKycStatusFor` |
+      |---|---|
+      | `0x7099…79C8` (granted during B1) | `1` GRANTED |
+      | `0x1111…1111` (never seen) | `0` NOT_GRANTED |
+      | zero address | `0` NOT_GRANTED |
+
+      An always-GRANTED gateway would have looked identical on the happy path.
+      **Consequence for the demo**: a payee wallet that has not been through
+      `POST /vendors/:id/wallets/:walletId/grant-kyc` now gets
+      `REVERIFY / ONCHAIN_KYC_NOT_GRANTED` — which is the demo, not a bug
+
+### C5 · CRE — blocked on a redeploy, not on code
+
+- [x] Every test suite pins itself to `fallback` and `mock` explicitly, so the
+      suite never depends on a DON, a tunnel, an unexpired Vault secret or
+      Hedera testnet being up (D09)
+- [ ] **`VENDOR_MATCHER` stays `fallback`, and flipping it right now would break
+      every payment.** The deployed workflow predates D62: it scores plaintext
+      names against a `minScore` that the config schema no longer has, while the
+      lookup endpoint now returns HMAC digests and no plaintext. Pointing the
+      API at that deployment would send digests to code that scores names, and
+      every payment would come back a mismatch
+- [ ] **Required order**: `cre workflow deploy` the current `src/cre/` → re-prove
+      the verdicts with `pnpm --filter @cp/api cre:e2e` → then flip `.env`. The
+      code change is one word; the deploy is the work
+
+I flipped this to `cre` before checking what was actually deployed, and reverted
+it. Recording that here because the mistake is easy to repeat: the source and
+the deployment are separate artefacts, and a passing test suite says nothing
+about which one the DON is running.
+
+### Runtime dependencies this track introduced
+
+Flipping both defaults means the deployed API now needs:
+
+- the DON able to reach it (ngrok static domain on `:3000`) and an unexpired
+  Vault secret — `CreVendorMatcher` **throws** rather than returning a verdict,
+  so a payment errors instead of silently passing
+- Hedera testnet reachable and the issuer account funded
+
+### Still not done
+
+- **Nothing broadcasts a transfer.** `apps/approval-bridge/src/wallet-cli.ts`
+  stops at "Local broadcast is not wired yet" — it signs nothing and sends
+  nothing, so "wallet 1 pays wallet 2" is new work, not wiring
+- The repo is private; every track requires public
+- No demo videos exist; every track requires one
+- The Supabase publishable key still needs rotating

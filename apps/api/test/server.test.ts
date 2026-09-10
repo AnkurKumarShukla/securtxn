@@ -8,7 +8,18 @@ import { buildServer } from "../src/server.js";
 let app: FastifyInstance;
 
 beforeAll(async () => {
-  const config: Config = { ...loadConfig(), NODE_ENV: "test", isProduction: false };
+  const config: Config = {
+    ...loadConfig(),
+    NODE_ENV: "test",
+    isProduction: false,
+    // Pinned so the suite never depends on a DON or on Hedera testnet.
+    VENDOR_MATCHER: "fallback",
+    COMPLIANCE_GATEWAY: "mock",
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock",
+  };
   app = await buildServer(config);
 });
 
@@ -99,7 +110,14 @@ describe("role separation (D12)", () => {
   let roleApp: FastifyInstance;
 
   beforeAll(async () => {
-    const config: Config = { ...loadConfig(), NODE_ENV: "test", isProduction: false };
+    const config: Config = {
+    ...loadConfig(),
+    NODE_ENV: "test",
+    isProduction: false,
+    // Pinned so the suite never depends on a DON or on Hedera testnet.
+    VENDOR_MATCHER: "fallback",
+    COMPLIANCE_GATEWAY: "mock",
+  };
     roleApp = await buildServer(config);
     roleApp.get("/test/approver-only", { preHandler: roleApp.requireRole("approver") }, async () => ({
       ok: true,

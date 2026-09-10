@@ -66,6 +66,16 @@ beforeAll(async () => {
   const shared = {
     ...base,
     NODE_ENV: "test" as const,
+    // Pinned, not inherited — see the note in payment-flow.test.ts (D09).
+    VENDOR_MATCHER: "fallback" as const,
+    // Pinned for the same reason as VENDOR_MATCHER: the deployed default now
+    // talks to Hedera testnet, and a unit suite must not depend on a public
+    // network being up. The on-chain branch is covered by decision.test.ts.
+    COMPLIANCE_GATEWAY: "mock" as const,
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock" as const,
     isProduction: false,
     RATE_LIMIT_MAX: 1_000_000,
     IDENTITY_PROVIDER: "mock" as const,

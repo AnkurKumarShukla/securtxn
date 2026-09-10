@@ -12,6 +12,13 @@ staging-settings:
   rpcs:
     - chain-name: ethereum-testnet-sepolia
       url: https://ethereum-sepolia-rpc.publicnode.com
+    # Vault DON secrets live on the MAINNET registry even for a staging
+    # workflow. Without this the secrets commands stop on an interactive
+    # "responses cannot be validated" prompt, which is the CLI correctly
+    # refusing to trust a gateway reply it cannot check against the chain —
+    # so this is supplying the check, not skipping it.
+    - chain-name: ethereum-mainnet
+      url: https://ethereum-rpc.publicnode.com
 
 # ==========================================================================
 production-settings:

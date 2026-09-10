@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
-import { privateKeyToAccount } from "viem/accounts";
+import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig, type Config } from "../src/config/index.js";
 import { buildServer } from "../src/server.js";
@@ -13,7 +13,10 @@ import {
   buildWalletControlMessage,
   domainFor,
 } from "../src/lib/eip712.js";
+import { consentToPayment } from "./fixtures/consent.js";
+import { clearWorldIdRows, passWorldIdCheck } from "./fixtures/worldid.js";
 import { fixtureOracle } from "./fixtures/oracle.js";
+import { createPayer } from "./fixtures/payer.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 const REAL_FIXTURES = join(REPO_ROOT, "fixtures", "digilocker");
@@ -27,6 +30,7 @@ const base = loadConfig();
 const prisma = new PrismaClient({ datasources: { db: { url: base.DATABASE_URL } } });
 
 let app: FastifyInstance;
+let payerId: string;
 let token: string;
 const vendorIds: string[] = [];
 const CHAIN_ID = base.EIP712_CHAIN_ID;
@@ -37,6 +41,20 @@ beforeAll(async () => {
     ...base,
     NODE_ENV: "test",
     isProduction: false,
+    // Pinned, not inherited. The deployed default is `cre`, and letting the
+    // suite pick that up would drive every test through a live DON and a
+    // public tunnel — slow, flaky, and dependent on a Vault secret that
+    // expires. The fallback exists precisely so the tests do not need an
+    // enclave (D09), and one shared contract suite proves the two agree.
+    VENDOR_MATCHER: "fallback",
+    // Pinned for the same reason as VENDOR_MATCHER: the deployed default now
+    // talks to Hedera testnet, and a unit suite must not depend on a public
+    // network being up. The on-chain branch is covered by decision.test.ts.
+    COMPLIANCE_GATEWAY: "mock",
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock",
     // The suite makes far more requests per minute from one address than a
     // real client would. Raised here rather than in the server, so production
     // rate limiting stays exactly as shipped.
@@ -47,6 +65,7 @@ beforeAll(async () => {
   app = await buildServer(config);
   await app.ready();
   token = await app.signToken("agent", "payment-flow-test");
+  payerId = await createPayer(prisma);
 });
 
 afterAll(async () => {
@@ -64,6 +83,11 @@ afterAll(async () => {
     select: { id: true },
   });
   const paymentIds = payments.map((p) => p.id);
+  // PayeeConsent, Notification and the World ID rows all hold Restrict FKs or
+  // point at rows deleted below, so they go first.
+  await prisma.payeeConsent.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
+  await prisma.notification.deleteMany({ where: { vendorId: { in: vendorIds } } });
+  await clearWorldIdRows(prisma, vendorIds);
   await prisma.evidenceRecord.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
   await prisma.approvalEvent.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
   await prisma.proposal.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
@@ -80,7 +104,18 @@ afterAll(async () => {
 });
 
 /** Walks a vendor all the way to a CONFIRMED wallet. */
-async function onboardedVendor(entityName = "Meridian Components Private Limited") {
+/**
+ * Onboards a vendor to a CONFIRMED wallet.
+ *
+ * `payee` is a parameter because "has this address been paid before?" is a
+ * property of the ADDRESS across the whole system, not of one vendor — so a
+ * test asserting first-payment behaviour has to own an address no other suite
+ * has ever sent to. Everything else uses the shared Anvil key.
+ */
+async function onboardedVendor(
+  entityName = "Meridian Components Private Limited",
+  payee: PrivateKeyAccount = PAYEE,
+) {
   const created = await app.inject({
     method: "POST",
     url: "/vendors",
@@ -115,17 +150,17 @@ async function onboardedVendor(entityName = "Meridian Components Private Limited
     method: "POST",
     url: `/vendors/${vendorId}/wallets`,
     headers: auth(),
-    payload: { address: PAYEE.address, network: "ethereum" },
+    payload: { address: payee.address, network: "ethereum" },
   });
   const { walletId, controlProofNonce } = wallet.json();
 
-  const controlSig = await PAYEE.signTypedData({
+  const controlSig = await payee.signTypedData({
     domain: domainFor(CHAIN_ID),
     types: WALLET_CONTROL_TYPES,
     primaryType: "WalletControlProof",
     message: buildWalletControlMessage({
       vendorId,
-      walletAddress: PAYEE.address,
+      walletAddress: payee.address,
       network: "ethereum",
       nonce: controlProofNonce,
     }),
@@ -138,14 +173,14 @@ async function onboardedVendor(entityName = "Meridian Components Private Limited
   });
 
   const row = await prisma.vendor.findUniqueOrThrow({ where: { id: vendorId } });
-  const bindingSig = await PAYEE.signTypedData({
+  const bindingSig = await payee.signTypedData({
     domain: domainFor(CHAIN_ID),
     types: IDENTITY_BINDING_TYPES,
     primaryType: "IdentityBinding",
     message: buildIdentityBindingMessage({
       onboardingSessionNonce: row.onboardingSessionNonce!,
       digilockerUserId: row.digilockerUserId!,
-      walletAddress: PAYEE.address,
+      walletAddress: payee.address,
       aadhaarDocHash: row.aadhaarDocHash!,
       panDocHash: row.panDocHash!,
     }),
@@ -175,6 +210,9 @@ async function createPayment(vendorId: string, walletId: string, amount = "12500
     payload: {
       vendorId,
       vendorWalletId: walletId,
+      payerVendorId: payerId,
+      intendedPayeeName: fixtureOracle().legalName,
+      intendedPayeePan: fixtureOracle().pan,
       invoiceRef: `INV-${Date.now()}`,
       amount,
       token: "USDC",
@@ -187,11 +225,22 @@ async function createPayment(vendorId: string, walletId: string, amount = "12500
 
 describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
   it("asks for a test amount on the first payment to a confirmed address", async () => {
-    const { vendorId, walletId } = await onboardedVendor();
+    // A FRESH address, generated per run. The check is global by design — the
+    // address is the risk unit, not the vendor — so reusing the shared Anvil
+    // key would make this assertion depend on whether some other suite had
+    // already sent to it, which is state this test does not control.
+    const freshPayee = privateKeyToAccount(generatePrivateKey());
+    const { vendorId, walletId } = await onboardedVendor(
+      "Meridian Components Private Limited",
+      freshPayee,
+    );
     const payment = await createPayment(vendorId, walletId);
 
     expect(payment.status).toBe("DRAFT");
     expect(payment.senderContextCommitment).toMatch(/^0x[0-9a-f]{64}$/);
+
+    // P4 gates P6: nothing about the payee is checked until they accept.
+    await consentToPayment(app, prisma, payment.id, vendorId, freshPayee, auth);
 
     const decision = await app.inject({
       method: "POST",
@@ -211,7 +260,8 @@ describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
       headers: auth(),
     });
     expect(after.json().status).toBe("AWAITING_APPROVAL");
-    expect(after.json().matchScore).toBe(1);
+    // Null since D62: digest matching is exact, so there is no score.
+    expect(after.json().matchScore).toBeNull();
   });
 
   it("refuses a payment to a wallet that was never confirmed", async () => {
@@ -233,6 +283,30 @@ describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
     const walletId = wallet.json().walletId as string;
 
     const payment = await createPayment(vendorId, walletId);
+
+    // An unconfirmed wallet is now stopped one step EARLIER than it used to
+    // be: consent has to be signed by the confirmed payout address, and this
+    // address has not proved anything yet. That is the stronger refusal —
+    // the payment never even reaches the identity check.
+    await passWorldIdCheck(prisma, payerId, payment.id);
+    const consent = await app.inject({
+      method: "POST",
+      url: `/payments/${payment.id}/request-consent`,
+      headers: auth(),
+    });
+    expect(consent.statusCode).toBe(200);
+
+    // The decision engine still has to refuse it, because a wallet can be
+    // revoked between consent and decision. Forced through the gate here so
+    // that branch is exercised end to end and not only as a unit test.
+    await prisma.payeeConsent.create({
+      data: { paymentRequestId: payment.id, decision: "ACCEPTED" },
+    });
+    await prisma.paymentRequest.update({
+      where: { id: payment.id },
+      data: { status: "DECISION_PENDING" },
+    });
+
     const decision = await app.inject({
       method: "POST",
       url: `/payments/${payment.id}/run-decision`,
@@ -253,28 +327,74 @@ describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
     expect(after.json().status).toBe("DECISION_PENDING");
   });
 
-  it("sends a name mismatch to review with the score attached", async () => {
-    const { vendorId, walletId } = await onboardedVendor("Meridian Components Private Limited");
+  it("REVERIFIES when the sender names a different company (D62)", async () => {
+    // A genuine mismatch, which the previous version of this test could not
+    // produce: it derived the "claim" from the payee's own record, so the two
+    // sides were the same value and the check could never fail.
+    const { vendorId, walletId } = await onboardedVendor();
 
-    // The registry name on file no longer resembles the vendor's own name.
-    await prisma.vendor.update({
-      where: { id: vendorId },
-      data: { legalEntityName: "Completely Different Holdings" },
+    const created = await app.inject({
+      method: "POST",
+      url: "/payments",
+      headers: auth(),
+      payload: {
+        vendorId,
+        vendorWalletId: walletId,
+        payerVendorId: payerId,
+        // Right wallet, wrong company — the invoice-fraud shape.
+        intendedPayeeName: "Completely Different Holdings",
+        intendedPayeePan: fixtureOracle().pan,
+        invoiceRef: `INV-MISMATCH-${Date.now()}`,
+        amount: "100",
+        token: "USDC",
+        network: "ethereum",
+      },
     });
+    expect(created.statusCode).toBe(201);
+    await consentToPayment(app, prisma, created.json().id, vendorId, PAYEE, auth);
 
-    const payment = await createPayment(vendorId, walletId);
     const decision = await app.inject({
       method: "POST",
-      url: `/payments/${payment.id}/run-decision`,
+      url: `/payments/${created.json().id}/run-decision`,
       headers: auth(),
     });
 
-    // Matching compares the claimed name against what is on file; identical
-    // sources cannot disagree, so this asserts the wiring reaches the matcher
-    // and reports a real score rather than a hardcoded 1.
     const body = decision.json();
-    expect(["SEND_TEST_AMOUNT", "REVERIFY"]).toContain(body.decision);
-    expect(typeof body.matchScore).toBe("number");
+    expect(body.decision).toBe("REVERIFY");
+    expect(body.reasonCode).toBe("VENDOR_MATCH_FAILED");
+    expect(body.matchScore).toBeNull();
+  });
+
+  it("REVERIFIES when the sender names the right company but the wrong PAN", async () => {
+    // Both fields must agree; a correct name alone must not carry it, because
+    // company names are not unique.
+    const { vendorId, walletId } = await onboardedVendor();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/payments",
+      headers: auth(),
+      payload: {
+        vendorId,
+        vendorWalletId: walletId,
+        payerVendorId: payerId,
+        intendedPayeeName: fixtureOracle().legalName,
+        intendedPayeePan: "ZZZZZ9999Z",
+        invoiceRef: `INV-PAN-${Date.now()}`,
+        amount: "100",
+        token: "USDC",
+        network: "ethereum",
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    await consentToPayment(app, prisma, created.json().id, vendorId, PAYEE, auth);
+
+    const decision = await app.inject({
+      method: "POST",
+      url: `/payments/${created.json().id}/run-decision`,
+      headers: auth(),
+    });
+    expect(decision.json().decision).toBe("REVERIFY");
   });
 
   it("rejects a payment whose wallet belongs to another vendor", async () => {
@@ -295,6 +415,9 @@ describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
       payload: {
         vendorId: otherVendorId,
         vendorWalletId: a.walletId,
+        payerVendorId: payerId,
+        intendedPayeeName: fixtureOracle().legalName,
+        intendedPayeePan: fixtureOracle().pan,
         invoiceRef: "INV-CROSS",
         amount: "10",
         token: "USDC",
@@ -307,6 +430,7 @@ describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
   it("refuses to re-run a decision once the payment has moved on", async () => {
     const { vendorId, walletId } = await onboardedVendor();
     const payment = await createPayment(vendorId, walletId);
+    await consentToPayment(app, prisma, payment.id, vendorId, PAYEE, auth);
 
     await app.inject({
       method: "POST",
@@ -334,6 +458,9 @@ describe("payment routes are agent-scoped", () => {
       payload: {
         vendorId: "00000000-0000-4000-8000-000000000001",
         vendorWalletId: "00000000-0000-4000-8000-000000000002",
+        payerVendorId: "00000000-0000-4000-8000-000000000001",
+        intendedPayeeName: "Anything Ltd",
+        intendedPayeePan: "ABCDE1234F",
         invoiceRef: "INV-1",
         amount: "1",
         token: "USDC",
@@ -348,6 +475,7 @@ describe.skipIf(!hasRealFixtures)("evidence chain (A6)", () => {
   it("writes vendor_match and decision in the same transaction as the status change", async () => {
     const { vendorId, walletId } = await onboardedVendor();
     const payment = await createPayment(vendorId, walletId);
+    await consentToPayment(app, prisma, payment.id, vendorId, PAYEE, auth);
 
     await app.inject({
       method: "POST",
@@ -366,18 +494,27 @@ describe.skipIf(!hasRealFixtures)("evidence chain (A6)", () => {
     expect(chain.chainValid).toBe(true);
     expect(chain.brokenAtIndex).toBeNull();
 
-    // Causal order: what the matcher found, then what was decided from it.
+    // Causal order, and every step of it: a live sender raised the payment, a
+    // live payee accepted, the payee agreed to be checked, the check ran, a
+    // verdict followed. A chain that showed a match before the consent
+    // authorising it would be describing a system with no gate.
     expect(chain.records.map((r: { eventType: string }) => r.eventType)).toEqual([
+      "world_id_check",
+      "world_id_check",
+      "payee_consent",
       "vendor_match",
       "decision",
     ]);
     expect(chain.records[0].previousRecordHash).toMatch(/^0{64}$/);
-    expect(chain.records[1].previousRecordHash).toBe(chain.records[0].payloadHash);
+    for (let i = 1; i < chain.records.length; i += 1) {
+      expect(chain.records[i].previousRecordHash).toBe(chain.records[i - 1].payloadHash);
+    }
   });
 
   it("records the read itself, after answering it (D18)", async () => {
     const { vendorId, walletId } = await onboardedVendor();
     const payment = await createPayment(vendorId, walletId);
+    await consentToPayment(app, prisma, payment.id, vendorId, PAYEE, auth);
     await app.inject({
       method: "POST",
       url: `/payments/${payment.id}/run-decision`,
@@ -391,7 +528,7 @@ describe.skipIf(!hasRealFixtures)("evidence chain (A6)", () => {
     });
     // The response shows the chain as of the read, not one containing the
     // record describing that same read.
-    expect(first.json().records).toHaveLength(2);
+    expect(first.json().records).toHaveLength(5);
 
     const second = await app.inject({
       method: "GET",
@@ -399,9 +536,9 @@ describe.skipIf(!hasRealFixtures)("evidence chain (A6)", () => {
       headers: auth(),
     });
     const records = second.json().records;
-    expect(records).toHaveLength(3);
-    expect(records[2].eventType).toBe("evidence_accessed");
-    expect(records[2].payload.data.actorRole).toBe("agent");
+    expect(records).toHaveLength(6);
+    expect(records[5].eventType).toBe("evidence_accessed");
+    expect(records[5].payload.data.actorRole).toBe("agent");
     expect(second.json().chainValid).toBe(true);
   });
 
@@ -409,6 +546,7 @@ describe.skipIf(!hasRealFixtures)("evidence chain (A6)", () => {
     // §4.8's acceptance criterion, against a real database row.
     const { vendorId, walletId } = await onboardedVendor();
     const payment = await createPayment(vendorId, walletId);
+    await consentToPayment(app, prisma, payment.id, vendorId, PAYEE, auth);
     await app.inject({
       method: "POST",
       url: `/payments/${payment.id}/run-decision`,
@@ -422,6 +560,9 @@ describe.skipIf(!hasRealFixtures)("evidence chain (A6)", () => {
     });
     expect(before.json().chainValid).toBe(true);
 
+    // A record in the middle of the chain. Corrupting a middle link is the
+    // case worth testing: the report has to name WHERE the chain broke, not
+    // merely that it did.
     const target = before.json().records[1];
     await prisma.evidenceRecord.update({
       where: { id: target.id },

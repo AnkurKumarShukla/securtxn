@@ -24,7 +24,8 @@ import type { VendorMatchInput } from "@cp/cre-workflows";
 
 const INPUT: VendorMatchInput = {
   vendorId: "00000000-0000-4000-8000-000000000001",
-  claimedLegalName: "Meridian Components Pvt Ltd",
+  claimedNameHmac: "d:components meridian",
+  claimedPanHmac: "d:ABCDE1234F",
   walletAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   network: "ethereum",
 };
@@ -90,12 +91,11 @@ describe("CreVendorMatcher", () => {
   it("returns the verdict once the callback lands", async () => {
     const { store } = fakeStore([
       PENDING,
-      { status: "COMPLETED", match: true, score: 0.91, reasonCode: "MATCHED", failureReason: null },
+      { status: "COMPLETED", match: true, score: null, reasonCode: "MATCHED", failureReason: null },
     ]);
 
     expect(await matcher(store).match(INPUT)).toEqual({
       match: true,
-      score: 0.91,
       reasonCode: "MATCHED",
     });
   });
@@ -106,7 +106,7 @@ describe("CreVendorMatcher", () => {
     // invocation, a fast workflow could call back before the row existed and
     // its verdict would be thrown away as unsolicited.
     const { store, calls } = fakeStore([
-      { status: "COMPLETED", match: true, score: 1, reasonCode: "MATCHED", failureReason: null },
+      { status: "COMPLETED", match: true, score: null, reasonCode: "MATCHED", failureReason: null },
     ]);
     const invoke = vi.fn(async () => ({ executionId: "0xexec" }));
 
@@ -121,7 +121,7 @@ describe("CreVendorMatcher", () => {
 
   it("passes the requestId to the workflow along with the match input", async () => {
     const { store } = fakeStore([
-      { status: "COMPLETED", match: true, score: 1, reasonCode: "MATCHED", failureReason: null },
+      { status: "COMPLETED", match: true, score: null, reasonCode: "MATCHED", failureReason: null },
     ]);
     const invoke = vi.fn(async () => ({ executionId: "0xexec" }));
 
@@ -132,7 +132,7 @@ describe("CreVendorMatcher", () => {
 
   it("records the execution id so a stuck request can be traced", async () => {
     const { store } = fakeStore([
-      { status: "COMPLETED", match: false, score: 0, reasonCode: "X", failureReason: null },
+      { status: "COMPLETED", match: false, score: null, reasonCode: "X", failureReason: null },
     ]);
 
     await matcher(store).match(INPUT);
@@ -148,14 +148,14 @@ describe("CreVendorMatcher", () => {
       {
         status: "COMPLETED",
         match: false,
-        score: 0.2,
-        reasonCode: "NAME_BELOW_THRESHOLD",
+        score: null,
+        reasonCode: "IDENTITY_MISMATCH",
         failureReason: null,
       },
     ]);
 
     expect(await matcher(store).match(INPUT)).toMatchObject({
-      reasonCode: "NAME_BELOW_THRESHOLD",
+      reasonCode: "IDENTITY_MISMATCH",
     });
     expect(store.get).toHaveBeenCalledTimes(4);
   });

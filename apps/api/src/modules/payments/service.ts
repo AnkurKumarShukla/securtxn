@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { keccak256, toHex } from "viem";
-import type { VendorMatcher } from "@cp/cre-workflows";
+import { canonicalEntityName, type VendorMatcher } from "@cp/cre-workflows";
 import { Prisma, type PrismaClient, type Vendor, type VendorWallet } from "@prisma/client";
 import type {
   AcknowledgmentRequest,
@@ -19,16 +19,24 @@ import type {
 } from "@cp/shared-types";
 import { ConflictError, NotFoundError, UnprocessableError } from "../../lib/errors.js";
 import { buildAcknowledgmentMessage, verifyAcknowledgment } from "../../lib/eip712.js";
-import { encryptJson } from "../../lib/crypto.js";
+import { encryptJson, hmac } from "../../lib/crypto.js";
 import type { Config } from "../../config/index.js";
 import { decide, recommendSettlementMode } from "../decision/index.js";
 import type { TierThresholds } from "../decision/types.js";
+import { KYC_STATUS, type ComplianceGateway } from "@cp/contracts";
 import type { SanctionsScreener } from "../sanctions/index.js";
 import { EvidenceService } from "../evidence/service.js";
 import { ExceptionService } from "../exceptions/service.js";
 
 export type PaymentServiceDeps = {
   prisma: PrismaClient;
+  /**
+   * The ATS token's compliance list (O8). Optional: an API running without a
+   * chain behind it still has to decide payments.
+   */
+  compliance?: ComplianceGateway;
+  /** Which tokenised security to ask about. Unset means there is nothing to ask. */
+  atsSecurityId?: string | undefined;
   evidence: EvidenceService;
   exceptions: ExceptionService;
   vendorMatcher: VendorMatcher;
@@ -62,6 +70,23 @@ export class PaymentService {
       data: {
         vendorId: input.vendorId,
         vendorWalletId: input.vendorWalletId,
+        payerVendorId: input.payerVendorId,
+
+        // Reduced to digests HERE and never stored in the clear (D62). The
+        // canonicalisation must be identical to the one the payee's digest was
+        // written with at identity completion, or two spellings of the same
+        // company would never agree.
+        //
+        // A name with no distinguishing tokens ("Private Limited") canonicalises
+        // to null; storing null means P6 cannot match, which is the correct
+        // failure — the alternative is a digest of the empty string matching
+        // every other such name.
+        claimedPayeeNameHmac: (() => {
+          const canonical = canonicalEntityName(input.intendedPayeeName);
+          return canonical ? hmac(canonical, this.deps.config.HMAC_PEPPER) : null;
+        })(),
+        claimedPayeePanHmac: hmac(input.intendedPayeePan, this.deps.config.HMAC_PEPPER),
+
         invoiceRef: input.invoiceRef,
         amount: new Prisma.Decimal(input.amount),
         token: input.token,
@@ -87,7 +112,7 @@ export class PaymentService {
   async runDecision(paymentId: string): Promise<DecisionResult> {
     const payment = await this.deps.prisma.paymentRequest.findUnique({
       where: { id: paymentId },
-      include: { vendor: true, vendorWallet: true },
+      include: { vendor: true, vendorWallet: true, payeeConsent: true },
     });
     if (!payment) throw new NotFoundError(`Payment '${paymentId}'`);
 
@@ -95,14 +120,39 @@ export class PaymentService {
       throw new ConflictError(`Payment is '${payment.status}'; a decision cannot be re-run`);
     }
 
+    // P4 GATES P6. Nothing about the payee is looked up until the payee has
+    // agreed to be looked up — this check is the whole reason the match is not
+    // a free identity oracle, so it belongs here, before any lookup, rather
+    // than as a policy the caller is trusted to follow.
+    //
+    // A DRAFT payment that never went through P3 lands here too, and is
+    // refused for the same reason: no consent on file is not consent.
+    if (payment.payeeConsent?.decision !== "ACCEPTED") {
+      throw new UnprocessableError(
+        "The payee has not accepted this payment, so their identity may not be checked. " +
+          "Request consent first (POST /payments/:id/request-consent).",
+      );
+    }
+
     const vendor: Vendor = payment.vendor;
     const wallet: VendorWallet = payment.vendorWallet;
     const legalName = displayName(vendor);
 
+    // The claim comes from the SENDER, recorded at P1 — never derived from the
+    // payee's own record. Comparing a record to itself is what the previous
+    // version did, and it made the identity check unfailable (D62).
+    if (!payment.claimedPayeeNameHmac || !payment.claimedPayeePanHmac) {
+      throw new UnprocessableError(
+        "This payment carries no payee claim, so identity cannot be verified. " +
+          "Recreate it with the intended payee's name and PAN.",
+      );
+    }
+
     const [matchResult, sanctions] = await Promise.all([
       this.deps.vendorMatcher.match({
         vendorId: vendor.id,
-        claimedLegalName: legalName,
+        claimedNameHmac: payment.claimedPayeeNameHmac,
+        claimedPanHmac: payment.claimedPayeePanHmac,
         walletAddress: wallet.address,
         network: wallet.network,
         ...(wallet.tokenContract ? { tokenContract: wallet.tokenContract } : {}),
@@ -118,6 +168,7 @@ export class PaymentService {
 
     const verdict = decide(
       {
+        onChainKycGranted: await this.isKycGrantedOnChain(wallet.address),
         vendorWallet: {
           status: wallet.status,
           address: wallet.address,
@@ -146,7 +197,7 @@ export class PaymentService {
         data: {
           decision: verdict.decision,
           decisionReasonCode: verdict.reasonCode,
-          matchScore: matchResult.score,
+          matchScore: null,
           status: proceeds ? "AWAITING_APPROVAL" : "DECISION_PENDING",
         },
       });
@@ -160,7 +211,7 @@ export class PaymentService {
         timestamp,
         data: {
           matched: matchResult.match,
-          score: matchResult.score,
+          score: null,
           reasonCode: matchResult.reasonCode,
           matcher: this.deps.matcherKind,
         },
@@ -173,7 +224,7 @@ export class PaymentService {
         data: {
           decision: verdict.decision,
           reasonCode: verdict.reasonCode,
-          matchScore: matchResult.score,
+          matchScore: null,
           tierLimitApplied: verdict.tierLimitApplied,
         },
       });
@@ -181,6 +232,28 @@ export class PaymentService {
       // A blocked duplicate opens a case in the same transaction. It is not
       // enough to refuse it: someone has to find out why a second payment was
       // raised for an invoice that was already settled (§7 phase 6).
+      // The mismatch alert (P6). Someone claimed this payee's identity and got
+      // it wrong; a silent failure is the prober's ideal outcome, so the payee
+      // is told inside the same transaction that recorded the verdict.
+      //
+      // Identifiers only, like every other payload: the alert says WHO asked,
+      // never what they claimed. Echoing the attempted name or PAN back would
+      // hand the payee a copy of whatever the prober typed.
+      if (!matchResult.match && payment.payerVendorId) {
+        await tx.notification.create({
+          data: {
+            vendorId: payment.vendorId,
+            kind: "IDENTITY_MISMATCH",
+            paymentRequestId: paymentId,
+            payload: {
+              payerVendorId: payment.payerVendorId,
+              reasonCode: matchResult.reasonCode,
+              invoiceRef: payment.invoiceRef,
+            },
+          },
+        });
+      }
+
       if (verdict.reasonCode === "DUPLICATE_PAYMENT") {
         await this.deps.exceptions.createWithin(tx, {
           paymentRequestId: paymentId,
@@ -193,9 +266,28 @@ export class PaymentService {
     return {
       decision: verdict.decision,
       reasonCode: verdict.reasonCode,
-      matchScore: matchResult.score,
+      matchScore: null,
       recommendedSettlementMode: recommendSettlementMode(verdict.reasonCode),
     };
+  }
+
+  /**
+   * Does the token itself accept this address? (O8)
+   *
+   * SELF-DISABLING WITHOUT A CHAIN. With a mock gateway or no configured
+   * security there is nothing authoritative to ask, and the mock answers
+   * NOT_GRANTED for every address that never went through `/grant-kyc` — so
+   * enforcing it would block every payment on an in-memory map. Returning true
+   * there is not a loophole: the gate exists to reflect what the chain will do,
+   * and where there is no chain it has nothing to reflect.
+   */
+  private async isKycGrantedOnChain(address: string): Promise<boolean> {
+    const compliance = this.deps.compliance;
+    const securityId = this.deps.atsSecurityId;
+    if (!compliance || compliance.kind === "mock" || !securityId) return true;
+
+    const status = await compliance.getKycStatus({ securityId, account: address });
+    return status === KYC_STATUS.GRANTED;
   }
 
   /**

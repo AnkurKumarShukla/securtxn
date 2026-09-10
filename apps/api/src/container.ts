@@ -71,17 +71,18 @@ export function createContainer(
       config.VENDOR_MATCHER === "cre"
         ? createCreVendorMatcher(config, prisma)
         : new FallbackVendorMatcher({
-            minScore: config.VENDOR_MATCH_MIN_SCORE,
             lookup: async (vendorId) => {
               const vendor = await prisma.vendor.findUnique({
                 where: { id: vendorId },
                 include: { wallets: true },
               });
               if (!vendor) return null;
+              // Digests only — no plaintext identity leaves this query (D62).
+              // A null digest is not a wildcard: evaluateMatch refuses it, so an
+              // unverified payee can never satisfy a claim about them.
               return {
-                legalName:
-                  vendor.legalEntityName ??
-                  [vendor.legalFirstName, vendor.legalLastName].filter(Boolean).join(" "),
+                legalNameHmac: vendor.legalNameHmac,
+                panNumberHmac: vendor.panNumberHmac,
                 wallets: vendor.wallets.map((w) => ({
                   address: w.address,
                   network: w.network,

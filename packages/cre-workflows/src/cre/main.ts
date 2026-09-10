@@ -23,7 +23,6 @@ import { initWorkflow, type VendorMatchWorkflowConfig } from "./workflow.js";
 // dropping .url() for a plain z.string() below.
 const configSchema = z.object({
   apiBaseUrl: z.string(),
-  minScore: z.number().min(0).max(1),
   // At least one — CRE rejects activation of a trigger with none.
   authorizedKeys: z.array(z.string()).min(1),
   // Required, not defaulted: a deployment's confidentiality should be legible

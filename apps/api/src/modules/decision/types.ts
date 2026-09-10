@@ -20,7 +20,12 @@ export type WalletSnapshot = {
   network: string;
 };
 
-export type MatchResult = { match: boolean; score: number; reasonCode: string };
+/**
+ * No score since D62. The match compares HMAC digests inside an enclave with no
+ * crypto, so it is exact — a fabricated 1.0/0 would invite a threshold that
+ * means nothing.
+ */
+export type MatchResult = { match: boolean; reasonCode: string };
 
 export type DecisionInput = {
   vendorWallet: WalletSnapshot;
@@ -36,6 +41,18 @@ export type DecisionInput = {
    */
   isDuplicate: boolean;
   isNewOrChangedAddress: boolean;
+
+  /**
+   * Whether the ATS token accepts this address (O8, Hedera).
+   *
+   * TRUE WHEN THERE IS NO CHAIN TO ASK. The caller passes true when the
+   * compliance gateway is a mock or no security is configured, because the
+   * mock answers NOT_GRANTED for every address that never went through
+   * `/grant-kyc` — gating on an in-memory map would block every payment while
+   * proving nothing. A control that is theatre in the common case is worse
+   * than no control, because it reads as one.
+   */
+  onChainKycGranted: boolean;
   amount: DecimalLike;
 };
 

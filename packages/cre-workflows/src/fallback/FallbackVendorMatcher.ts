@@ -26,18 +26,17 @@ export { MATCH_REASONS } from "../matching.js";
 
 export type FallbackMatcherOptions = {
   lookup: VendorLookup;
-  /**
-   * Minimum name similarity to count as a match. Config, not a literal — it is
-   * risk appetite, and different customers will set it differently (D08).
-   */
-  minScore: number;
 };
+
+// No minScore. Digest comparison is exact, so there is no threshold to tune —
+// the risk appetite that D08 put in config now lives in canonicalisation
+// (which spellings reduce to the same string), not in a number (D62).
 
 export class FallbackVendorMatcher implements VendorMatcher {
   constructor(private readonly options: FallbackMatcherOptions) {}
 
   async match(input: VendorMatchInput): Promise<VendorMatchResult> {
     const vendor = await this.options.lookup(input.vendorId);
-    return evaluateMatch(input, vendor, this.options.minScore);
+    return evaluateMatch(input, vendor);
   }
 }

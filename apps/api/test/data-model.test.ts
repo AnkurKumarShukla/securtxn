@@ -236,3 +236,42 @@ describe("money precision", () => {
     expect(readBack.amount.toFixed(18)).toBe(smallest);
   });
 });
+
+describe("row-level security (D46)", () => {
+  /**
+   * RLS is enabled per TABLE, and a table created after the enabling migration
+   * ran simply does not have it. That is a silent gap: nothing fails, the table
+   * just sits readable by the browser-shipped anon key.
+   *
+   * So this asserts the property directly against the catalog rather than
+   * trusting that someone remembered to add a table to a migration. Any future
+   * model is covered the moment it exists.
+   */
+  it("has RLS enabled on every table in the public schema", async () => {
+    const unprotected = await prisma.$queryRaw<{ tablename: string }[]>`
+      SELECT c.relname AS tablename
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND c.relrowsecurity = false
+      ORDER BY c.relname
+    `;
+
+    expect(unprotected.map((row) => row.tablename)).toEqual([]);
+  });
+
+  it("protects the consent signature in particular", async () => {
+    // Named separately because it is the highest-value row in the database:
+    // it holds the signature that authorises a payment, so a writable
+    // PayeeConsent would let anyone manufacture the payee's agreement.
+    const [row] = await prisma.$queryRaw<{ relrowsecurity: boolean }[]>`
+      SELECT c.relrowsecurity
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = 'PayeeConsent'
+    `;
+
+    expect(row?.relrowsecurity).toBe(true);
+  });
+});

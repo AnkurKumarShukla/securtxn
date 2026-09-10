@@ -48,6 +48,21 @@ export function decide(input: DecisionInput, cfg: TierThresholds): Decision {
 
   // --- soft blocks: send this to a human, do not send the money -------------
 
+  // REVERIFY, not DO_NOT_SEND, for the same reason a failed CRE lookup is
+  // (D44): a missing grant means "we could not confirm", not "confirmed bad".
+  // The grant may simply not have been mined yet, and a permanent refusal for
+  // a timing gap would be wrong.
+  //
+  // Placed BEFORE the identity match so a payee the token will not accept is
+  // reported as such, rather than as an identity problem they cannot fix.
+  if (!input.onChainKycGranted) {
+    return {
+      decision: "REVERIFY",
+      reasonCode: "ONCHAIN_KYC_NOT_GRANTED",
+      tierLimitApplied: null,
+    };
+  }
+
   if (!input.matchResult.match) {
     // REVERIFY, not DO_NOT_SEND: a name mismatch is frequently a typo or a
     // trading-name difference. It needs a person, not a permanent refusal.

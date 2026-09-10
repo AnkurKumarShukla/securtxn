@@ -29,6 +29,7 @@ enum PaymentDecision {
 
 enum PaymentStatus {
   DRAFT
+  AWAITING_PAYEE_CONSENT
   DECISION_PENDING
   AWAITING_APPROVAL
   APPROVED
@@ -203,6 +204,14 @@ model Vendor {
   aadhaarKycTtl          DateTime? // KycRes ttl (observed: issue + 1 year). Schedule re-verification
   //                                 before this date; CONFIRMED is not permanent.
   panNumberHmac          String? // HMAC-SHA256(PAN, pepper) — never plaintext
+  /// HMAC-SHA256(canonicalEntityName(legal name), pepper).
+  ///
+  /// The CRE enclave has no crypto, so the match compares digests rather than
+  /// decrypting anything (D62). Canonicalisation is dedupe + sort + join of the
+  /// suffix-stripped tokens, which preserves the set semantics the old Jaccard
+  /// score had — "Meridian Components Pvt Ltd" and "MERIDIAN COMPONENTS PRIVATE
+  /// LIMITED" reduce to the same string, therefore the same digest.
+  legalNameHmac          String?
   panVerifiedOn          DateTime?
   photoEncryptedRef      String? // -> EncryptedBlob.id. The UIDAI <Pht> portrait, used for face-match.
   photoBlob              EncryptedBlob? @relation(fields: [photoEncryptedRef], references: [id], onDelete: Restrict)
@@ -259,6 +268,12 @@ model Vendor {
 
   wallets     VendorWallet[]
   payments    PaymentRequest[]
+  /// Payments this vendor SENT. Both parties onboard identically, so a vendor
+  /// is a payer here and a payee in `payments` (D62 flow, O1-O8).
+  paymentsSent  PaymentRequest[] @relation("PaymentPayer")
+  notifications Notification[]
+  blocksMade    IdentityBlock[]  @relation("BlockOwner")
+  blocksAgainst IdentityBlock[]  @relation("BlockTarget")
   credentials VerifiableCredential[]
 
   @@index([kybStatus])
@@ -352,6 +367,23 @@ model PaymentRequest {
   id                      String       @id @default(uuid())
   vendorId                String
   vendor                  Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  /// What the SENDER believes about the payee, as digests (P1, D62).
+  ///
+  /// This is the whole point of the match and it did not exist before: the old
+  /// code derived the "claim" from the payee's own record and compared it to
+  /// itself, so the identity check could never fail. A claim has to come from
+  /// the party making it.
+  ///
+  /// Nullable so pre-existing rows migrate; a payment without them cannot pass
+  /// P6, which is the correct failure.
+  claimedPayeeNameHmac    String?
+  claimedPayeePanHmac     String?
+
+  /// The paying party, onboarded through the same O1-O8 path as the payee.
+  /// Optional only so existing rows survive the migration; required for any
+  /// payment that goes through the consent flow.
+  payerVendorId           String?
+  payer                   Vendor?      @relation("PaymentPayer", fields: [payerVendorId], references: [id], onDelete: Restrict)
   vendorWalletId          String
   vendorWallet            VendorWallet @relation(fields: [vendorWalletId], references: [id], onDelete: Restrict)
   invoiceRef              String
@@ -365,6 +397,8 @@ model PaymentRequest {
 
   /// Chosen when the payment is raised, not when it is sent. The approver sees
   /// the mode on the proposal, and the mode is part of what they approve.
+  payeeConsent   PayeeConsent?
+
   settlementMode SettlementMode @default(DIRECT)
 
   decision           PaymentDecision?
@@ -800,4 +834,96 @@ model EvidenceAnchor {
 
   @@unique([topicId, sequenceNumber])
   @@index([createdAt])
+}
+
+/// The payee's answer to "someone wants to pay you" (P4).
+///
+/// SIGNED, not a flag. A database boolean saying "the payee agreed" is worth
+/// nothing in a dispute — it is only our own assertion. The EIP-712 signature is
+/// made by the CONFIRMED wallet that will receive the money, so consent is
+/// non-repudiable and bound to the address being paid.
+///
+/// It also gates the match: no consent, no CRE run, nothing learned. That is
+/// what stops the verification endpoint being a free identity oracle.
+model PayeeConsent {
+  id               String         @id @default(uuid())
+  paymentRequestId String         @unique
+  paymentRequest   PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Restrict)
+
+  decision PayeeConsentDecision
+
+  /// EIP-712 signature over {paymentId, payeeAddress, amount, token, invoiceRef}.
+  /// Absent on a DENY — refusing needs no proof, accepting does.
+  signature      String?
+  signerAddress  String?
+
+  /// The World ID verification, when the risk engine demanded one (P5).
+  /// Null means the challenge was not triggered, never that it failed.
+  worldIdVerificationId String?
+
+  decidedAt DateTime @default(now())
+
+  @@index([decision, decidedAt])
+}
+
+enum PayeeConsentDecision {
+  ACCEPTED
+  DENIED
+}
+
+/// Something a party needs to see. Deliberately a row, not an email.
+///
+/// The record IS the notification: it is testable, it survives delivery
+/// failure, and email or SMS becomes a delivery adapter over the top without
+/// changing the flow.
+model Notification {
+  id String @id @default(uuid())
+
+  /// Who it is for — a vendorId. Not a channel address; delivery is separate.
+  vendorId String
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+
+  kind NotificationKind
+
+  /// Structured, PII-free payload. Same discipline as the evidence chain (D27):
+  /// identifiers, enums and amounts — never a name, PAN or document.
+  payload Json
+
+  paymentRequestId String?
+
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([vendorId, readAt, createdAt])
+}
+
+enum NotificationKind {
+  /// P3: a payment is waiting for this payee to accept or deny.
+  CONSENT_REQUESTED
+  /// P6 failed: someone claimed this payee's identity and was wrong.
+  /// The alarm that makes probing visible instead of silent.
+  IDENTITY_MISMATCH
+  /// The payee's HTLC lock is live and claimable.
+  FUNDS_LOCKED
+}
+
+/// A payee refusing to be asked again by a specific payer.
+///
+/// Keyed on the payer's VENDOR ID — their verified identity — not a wallet
+/// address. Addresses rotate in seconds; a DigiLocker-backed identity does not.
+model IdentityBlock {
+  id String @id @default(uuid())
+
+  /// The payee doing the blocking.
+  blockedByVendorId String
+  blockedBy         Vendor @relation("BlockOwner", fields: [blockedByVendorId], references: [id], onDelete: Restrict)
+
+  /// The payer being blocked.
+  blockedVendorId String
+  blocked         Vendor @relation("BlockTarget", fields: [blockedVendorId], references: [id], onDelete: Restrict)
+
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([blockedByVendorId, blockedVendorId])
 }

@@ -15,6 +15,9 @@ import { keccak256 } from "viem";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig, type Config } from "../src/config/index.js";
 import { buildServer } from "../src/server.js";
+import { claimDigests } from "./fixtures/claim.js";
+import { fixtureOracle } from "./fixtures/oracle.js";
+import { createPayer } from "./fixtures/payer.js";
 import { recommendSettlementMode } from "../src/modules/decision/index.js";
 
 const base = loadConfig();
@@ -26,6 +29,7 @@ const ESCROW = "0x8ad684cff71aa37c7aa5a53b3a443dcd3e82285e" as Address;
 const TOKEN = "0x8418e76609e60e16dfa22722e707381da9b9173a" as Address;
 
 let app: FastifyInstance;
+let payerId: string;
 let token: string;
 let vendorId: string;
 let walletId: string;
@@ -39,13 +43,24 @@ beforeAll(async () => {
     ...base,
     NODE_ENV: "test",
     isProduction: false,
+    // Pinned, not inherited. The deployed default is `cre`, and letting the
+    // suite pick that up would drive every test through a live DON and a
+    // public tunnel — slow, flaky, and dependent on a Vault secret that
+    // expires. The fallback exists precisely so the tests do not need an
+    // enclave (D09), and one shared contract suite proves the two agree.
+    VENDOR_MATCHER: "fallback",
     RATE_LIMIT_MAX: 1_000_000,
     IDENTITY_PROVIDER: "mock",
     COMPLIANCE_GATEWAY: "mock",
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock",
   };
   app = await buildServer(config);
   await app.ready();
   token = await app.signToken("agent", "settlement-flow-test");
+  payerId = await createPayer(prisma);
 
   const vendor = await prisma.vendor.create({
     data: {
@@ -90,6 +105,8 @@ async function sentPayment(mode: "DIRECT" | "HTLC"): Promise<string> {
     data: {
       vendorId,
       vendorWalletId: walletId,
+      payerVendorId: payerId,
+      ...claimDigests(fixtureOracle().legalName, fixtureOracle().pan, base.HMAC_PEPPER),
       invoiceRef: `INV-${Math.random().toString(36).slice(2, 10)}`,
       amount: new Prisma.Decimal("500.00"),
       token: "USDC",
@@ -149,6 +166,9 @@ describe("settlement mode is chosen per payment", () => {
     const created = await post("/payments", {
       vendorId,
       vendorWalletId: walletId,
+      payerVendorId: payerId,
+      intendedPayeeName: fixtureOracle().legalName,
+      intendedPayeePan: fixtureOracle().pan,
       invoiceRef: "INV-DEFAULT-MODE",
       amount: "100.00",
       token: "USDC",
@@ -164,6 +184,9 @@ describe("settlement mode is chosen per payment", () => {
     const created = await post("/payments", {
       vendorId,
       vendorWalletId: walletId,
+      payerVendorId: payerId,
+      intendedPayeeName: fixtureOracle().legalName,
+      intendedPayeePan: fixtureOracle().pan,
       invoiceRef: "INV-OPT-IN",
       amount: "100.00",
       token: "USDC",

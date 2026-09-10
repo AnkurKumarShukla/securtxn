@@ -45,6 +45,8 @@ export const paymentRoutes: FastifyPluginAsyncZod = async (app) => {
   });
   const service = new PaymentService({
     prisma: app.prisma,
+    compliance: app.container.complianceGateway,
+    atsSecurityId: app.config.ATS_SECURITY_ID,
     vendorMatcher: app.container.vendorMatcher,
     sanctionsScreener: app.container.sanctionsScreener,
     tierThresholds: app.container.tierThresholds,

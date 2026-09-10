@@ -360,6 +360,14 @@ A wallet-control signature (`controlProofSig`) proves **key custody only**. It p
 
 ### 4.1 `apps/api` — core platform
 
+> **The payment sequence in this section is superseded by `docs/payment-flow.md`.**
+> Two gates were added after this document was written and are enforced in the
+> service, not by convention: the payee must accept before their identity is
+> checked (D63), and the sender must pass a World ID check for that specific
+> payment before the payee is notified (D64). The identity comparison itself is
+> now over HMAC digests rather than name similarity (D62), so there is no score
+> and no threshold anywhere in the decision path.
+
 **Stack**: Fastify, Prisma, PostgreSQL, Zod for request validation (schemas shared from `packages/shared-types`).
 
 **Responsibilities**: vendor CRUD + wallet versioning, the decision engine state machine, evidence hash-chain writes, exception case management, and orchestration calls out to CRE / ATS / approval-bridge.

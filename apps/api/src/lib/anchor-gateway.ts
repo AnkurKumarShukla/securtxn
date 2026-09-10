@@ -100,7 +100,20 @@ export class MockAnchorGateway implements AnchorGateway {
   /** Deliberately not a plausible topic id. Nobody can mistake this for real. */
   readonly topicId = "0.0.0";
 
-  private sequence = 0;
+  /**
+   * Seeded from the clock, not from zero.
+   *
+   * `(topicId, sequenceNumber)` is unique in the database, and this counter
+   * lives in memory. Starting at zero means every fresh process replays
+   * sequence 1, 2, 3… and collides with rows a previous run already wrote —
+   * which is invisible against a database you recreate locally, and a hard
+   * unique-constraint failure against a persistent shared one.
+   *
+   * Seconds since epoch is monotonic across restarts and comfortably inside a
+   * 32-bit int until 2038, so a real topic's numbering is still plausible while
+   * two runs can never overlap.
+   */
+  private sequence = Math.floor(Date.now() / 1000);
   private readonly messages = new Map<number, { contents: string; consensusTimestamp: string }>();
 
   async publish(contents: string): Promise<AnchorReceipt> {

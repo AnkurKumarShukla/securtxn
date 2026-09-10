@@ -22,6 +22,7 @@ export type PaymentDecision = z.infer<typeof PaymentDecision>;
 
 export const PaymentStatus = z.enum([
   "DRAFT",
+  "AWAITING_PAYEE_CONSENT",
   "DECISION_PENDING",
   "AWAITING_APPROVAL",
   "APPROVED",
@@ -131,3 +132,19 @@ export const SecurityEventKind = z.enum([
   "REDEEMED",
 ]);
 export type SecurityEventKind = z.infer<typeof SecurityEventKind>;
+
+/** The payee's answer at P4. A DENY carries no signature — refusing needs no proof. */
+export const PayeeConsentDecision = z.enum(["ACCEPTED", "DENIED"]);
+export type PayeeConsentDecision = z.infer<typeof PayeeConsentDecision>;
+
+/**
+ * What a party is being told. IDENTITY_MISMATCH is the security-relevant one:
+ * it makes a failed identity probe visible to the person being probed, instead
+ * of failing silently in the attacker's favour (D62).
+ */
+export const NotificationKind = z.enum([
+  "CONSENT_REQUESTED",
+  "IDENTITY_MISMATCH",
+  "FUNDS_LOCKED",
+]);
+export type NotificationKind = z.infer<typeof NotificationKind>;

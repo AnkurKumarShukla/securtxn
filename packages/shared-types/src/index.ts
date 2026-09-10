@@ -12,4 +12,5 @@ export * from "./approval.js";
 export * from "./evidence.js";
 export * from "./exception.js";
 export * from "./settlement.js";
+export * from "./consent.js";
 export * from "./security.js";

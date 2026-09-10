@@ -8,7 +8,9 @@ export default defineConfig({
     // intermittently for reasons that have nothing to do with the code.
     fileParallelism: false,
     // Real signature verification and database round-trips are slower than
-    // pure unit tests.
-    testTimeout: 20_000,
+    // pure unit tests, and a single flow test now walks a payment through
+    // DigiLocker onboarding, three EIP-712 signatures, payee consent and a
+    // decision — the duplicate-invoice case does all of that twice.
+    testTimeout: 45_000,
   },
 });

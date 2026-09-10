@@ -1,6 +1,5 @@
 {
   "apiBaseUrl": "https://unrequalified-already-berry.ngrok-free.dev",
-  "minScore": 0.7,
   "authorizedKeys": [
     "0x86CcBa4674db731CD922e46265cbBa1f5E75b5d5"
   ],

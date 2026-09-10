@@ -103,10 +103,10 @@ export class CreVendorMatcher implements VendorMatcher {
       if (record?.status === "COMPLETED") {
         // A COMPLETED row with no verdict is a bug in the callback, not a
         // negative match, and must not be silently read as one.
-        if (record.match === null || record.score === null || record.reasonCode === null) {
+        if (record.match === null || record.reasonCode === null) {
           throw new Error(`CRE vendor match ${requestId} completed without a verdict`);
         }
-        return { match: record.match, score: record.score, reasonCode: record.reasonCode };
+        return { match: record.match, reasonCode: record.reasonCode };
       }
 
       if (record?.status === "FAILED") {

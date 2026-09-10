@@ -33,7 +33,17 @@ const Body = z.union([
   z.object({
     requestId: Uuid,
     match: z.boolean(),
-    score: z.number().min(0).max(1),
+    /**
+     * Optional since D62. The enclave compares HMAC digests, which are exact,
+     * so a workflow built after that change sends no score at all — and this
+     * endpoint REQUIRING one silently rejected every verdict it produced, with
+     * a 400 the workflow surfaced only as "verdict callback failed".
+     *
+     * Still accepted, and still stored, because a workflow deployed before the
+     * change is a live caller until it is replaced. A callback that arrives
+     * with a score is not wrong; one that arrives without is now the norm.
+     */
+    score: z.number().min(0).max(1).nullish(),
     reasonCode: z.string().min(1).max(64),
   }),
   z.object({
@@ -103,7 +113,7 @@ export const vendorMatchResultRoutes: FastifyPluginAsyncZod = async (app) => {
         data: {
           status: "COMPLETED",
           match: body.match,
-          score: body.score,
+          score: body.score ?? null,
           reasonCode: body.reasonCode,
           completedAt: new Date(),
         },

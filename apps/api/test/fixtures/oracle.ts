@@ -35,6 +35,10 @@ export type FixtureOracle = {
   legalLastName: string;
   panPrefix: string;
   addressTerms: string[];
+  /** The exact verified legal name — what `legalNameHmac` is derived from. */
+  legalName: string;
+  /** The exact PAN — what `panNumberHmac` is derived from. */
+  pan: string;
 };
 
 let cached: FixtureOracle | undefined;

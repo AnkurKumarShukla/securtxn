@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { FallbackVendorMatcher, MATCH_REASONS, nameSimilarity } from "@cp/cre-workflows";
+import { nameSimilarity } from "@cp/cre-workflows";
 import type { VerificationTier } from "@cp/shared-types";
 import { describe, expect, it } from "vitest";
 import { decide } from "../src/modules/decision/index.js";
@@ -28,13 +28,49 @@ function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
       network: "ethereum",
     },
     verificationTier: "TIER3_ADDRESS",
-    matchResult: { match: true, score: 0.98, reasonCode: "MATCHED" },
+    matchResult: { match: true, reasonCode: "MATCHED" },
     sanctionsHit: false,
+    isDuplicate: false,
+    onChainKycGranted: true,
     isNewOrChangedAddress: false,
     amount: new Prisma.Decimal("100"),
     ...overrides,
   };
 }
+
+describe("decision engine — the on-chain gate (O8)", () => {
+  it("sends a payee the token will not accept back for reverification", () => {
+    // The chain's refusal, not ours. Attempting the transfer anyway reverts,
+    // so surfacing it here turns a failed transaction into an answer.
+    const result = decide(input({ onChainKycGranted: false }), thresholds);
+    expect(result.decision).toBe("REVERIFY");
+    expect(result.reasonCode).toBe("ONCHAIN_KYC_NOT_GRANTED");
+  });
+
+  it("is outranked by every hard block", () => {
+    // A sanctioned payee whose grant is also missing must read as sanctioned:
+    // the most severe finding is what lands in the evidence chain.
+    expect(
+      decide(input({ onChainKycGranted: false, sanctionsHit: true }), thresholds).reasonCode,
+    ).toBe("SANCTIONS_HIT");
+    expect(
+      decide(input({ onChainKycGranted: false, isDuplicate: true }), thresholds).reasonCode,
+    ).toBe("DUPLICATE_PAYMENT");
+  });
+
+  it("is reported ahead of an identity mismatch", () => {
+    // A payee the token rejects cannot fix that by correcting a name, so the
+    // actionable fault is the grant.
+    const result = decide(
+      input({
+        onChainKycGranted: false,
+        matchResult: { match: false, reasonCode: "IDENTITY_MISMATCH" },
+      }),
+      thresholds,
+    );
+    expect(result.reasonCode).toBe("ONCHAIN_KYC_NOT_GRANTED");
+  });
+});
 
 describe("decision engine — hard blocks", () => {
   it("blocks on a sanctions hit", () => {
@@ -71,7 +107,7 @@ describe("decision engine — precedence is policy", () => {
         sanctionsHit: true,
         vendorWallet: { ...input().vendorWallet, status: "REVOKED" },
         verificationTier: "TIER0_UNVERIFIED",
-        matchResult: { match: false, score: 0.1, reasonCode: "NAME_BELOW_THRESHOLD" },
+        matchResult: { match: false, reasonCode: "NAME_BELOW_THRESHOLD" },
       }),
       thresholds,
     );
@@ -82,7 +118,7 @@ describe("decision engine — precedence is policy", () => {
     const result = decide(
       input({
         vendorWallet: { ...input().vendorWallet, status: "PENDING_VERIFICATION" },
-        matchResult: { match: false, score: 0.2, reasonCode: "NAME_BELOW_THRESHOLD" },
+        matchResult: { match: false, reasonCode: "NAME_BELOW_THRESHOLD" },
       }),
       thresholds,
     );
@@ -96,7 +132,7 @@ describe("decision engine — soft blocks", () => {
     // A name mismatch is often a typo or a trading name. It needs a person,
     // not a permanent refusal.
     const result = decide(
-      input({ matchResult: { match: false, score: 0.4, reasonCode: "NAME_BELOW_THRESHOLD" } }),
+      input({ matchResult: { match: false, reasonCode: "NAME_BELOW_THRESHOLD" } }),
       thresholds,
     );
     expect(result.decision).toBe("REVERIFY");
@@ -176,87 +212,13 @@ describe("name similarity (shared by both matchers)", () => {
   });
 });
 
-describe("FallbackVendorMatcher", () => {
-  const vendor = {
-    legalName: "Meridian Components Private Limited",
-    wallets: [
-      {
-        address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        network: "ethereum",
-        tokenContract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-      },
-    ],
-  };
-  const matcher = new FallbackVendorMatcher({ minScore: 0.85, lookup: async () => vendor });
-
-  const base = {
-    vendorId: "v1",
-    claimedLegalName: "Meridian Components Pvt Ltd",
-    walletAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-    network: "ethereum",
-  };
-
-  it("matches a known vendor, wallet and name", async () => {
-    const result = await matcher.match(base);
-    expect(result.match).toBe(true);
-    expect(result.score).toBe(1);
-    expect(result.reasonCode).toBe(MATCH_REASONS.MATCHED);
-  });
-
-  it("is case-insensitive about the address", async () => {
-    const result = await matcher.match({ ...base, walletAddress: base.walletAddress.toLowerCase() });
-    expect(result.match).toBe(true);
-  });
-
-  it("refuses an address the vendor never registered", async () => {
-    // No name score can compensate: this is the misdirection the product exists
-    // to prevent.
-    const result = await matcher.match({
-      ...base,
-      walletAddress: "0x0000000000000000000000000000000000000001",
-    });
-    expect(result.match).toBe(false);
-    expect(result.score).toBe(0);
-    expect(result.reasonCode).toBe(MATCH_REASONS.WALLET_NOT_ON_FILE);
-  });
-
-  it("refuses the right address on the wrong network", async () => {
-    const result = await matcher.match({ ...base, network: "hedera" });
-    expect(result.reasonCode).toBe(MATCH_REASONS.WALLET_NOT_ON_FILE);
-  });
-
-  it("refuses the right address with the wrong token contract", async () => {
-    const result = await matcher.match({
-      ...base,
-      tokenContract: "0x0000000000000000000000000000000000000002",
-    });
-    expect(result.reasonCode).toBe(MATCH_REASONS.WALLET_NOT_ON_FILE);
-  });
-
-  it("reports the score even when it falls below the threshold", async () => {
-    // A human judging "typo" against "wrong company" needs the number.
-    const result = await matcher.match({ ...base, claimedLegalName: "Meridian Logistics" });
-    expect(result.match).toBe(false);
-    expect(result.score).toBeGreaterThan(0);
-    expect(result.reasonCode).toBe(MATCH_REASONS.NAME_BELOW_THRESHOLD);
-  });
-
-  it("reports a missing vendor rather than throwing", async () => {
-    const missing = new FallbackVendorMatcher({ minScore: 0.85, lookup: async () => null });
-    const result = await missing.match(base);
-    expect(result.reasonCode).toBe(MATCH_REASONS.VENDOR_NOT_FOUND);
-  });
-
-  it("honours the configured threshold", async () => {
-    // Risk appetite, not a constant: the same inputs decide differently.
-    const strict = new FallbackVendorMatcher({ minScore: 0.99, lookup: async () => vendor });
-    const loose = new FallbackVendorMatcher({ minScore: 0.3, lookup: async () => vendor });
-    const claim = { ...base, claimedLegalName: "Meridian Components Group" };
-
-    expect((await strict.match(claim)).match).toBe(false);
-    expect((await loose.match(claim)).match).toBe(true);
-  });
-});
+// FallbackVendorMatcher's behaviour is NOT retested here.
+//
+// It lives in packages/cre-workflows/test/vendorMatcher.contract.ts, which both
+// implementations run against the same assertions (D09). A second copy in this
+// file would be free to drift from the CRE path, which is exactly the failure
+// the shared contract exists to prevent — and since D62 the rule compares
+// digests, so a duplicate here would also need its own hashing stand-in.
 
 describe("StubSanctionsScreener", () => {
   it("always clears, and says so in its ref", async () => {

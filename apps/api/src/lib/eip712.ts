@@ -274,3 +274,81 @@ export async function verifySecretRelease(input: {
     signature: input.signature as Hex,
   });
 }
+
+// --- payee consent ---------------------------------------------------------
+
+/**
+ * The payee agreeing to be paid — and, before that, agreeing to be VERIFIED (P4).
+ *
+ * This signature is what stops the identity check from being a free oracle. A
+ * sender who wants to learn whether some PAN belongs to some address must first
+ * get the owner of that address to sign this, for a named amount, against a
+ * named invoice. Every probe therefore costs the victim's active participation
+ * and leaves them a record of who asked.
+ *
+ * It is signed by the CONFIRMED wallet, not by an account or a session: the
+ * consent has to come from the same key the money will be sent to, or it says
+ * nothing about whether that address wants the payment.
+ *
+ * `amount` and `token` are in the payload deliberately. Consent is to a
+ * specific payment, not a standing relationship — a captured signature cannot
+ * be replayed to wave through a larger transfer later. `amount` is a string
+ * because it is a decimal quantity of tokens as the human agreed to it; putting
+ * it through a float on the way to being signed would let the signed value and
+ * the stored value disagree.
+ */
+export const PAYEE_CONSENT_TYPES = {
+  PayeeConsent: [
+    { name: "paymentRequestId", type: "string" },
+    { name: "payeeAddress", type: "address" },
+    { name: "amount", type: "string" },
+    { name: "token", type: "string" },
+    { name: "invoiceRef", type: "string" },
+    { name: "statement", type: "string" },
+  ],
+} as const;
+
+export const PAYEE_CONSENT_STATEMENT =
+  "I accept this payment and consent to verification of my identity for it.";
+
+export type PayeeConsentMessage = {
+  paymentRequestId: string;
+  payeeAddress: Address;
+  amount: string;
+  token: string;
+  invoiceRef: string;
+  statement: string;
+};
+
+export function buildPayeeConsentMessage(input: {
+  paymentRequestId: string;
+  payeeAddress: string;
+  amount: string;
+  token: string;
+  invoiceRef: string;
+}): PayeeConsentMessage {
+  return {
+    paymentRequestId: input.paymentRequestId,
+    payeeAddress: input.payeeAddress as Address,
+    amount: input.amount,
+    token: input.token,
+    invoiceRef: input.invoiceRef,
+    statement: PAYEE_CONSENT_STATEMENT,
+  };
+}
+
+export async function verifyPayeeConsent(input: {
+  chainId: number;
+  address: string;
+  signature: string;
+  message: PayeeConsentMessage;
+}): Promise<boolean> {
+  return verifyTypedData({
+    address: input.address as Address,
+    domain: domainFor(input.chainId),
+    types: PAYEE_CONSENT_TYPES,
+    primaryType: "PayeeConsent",
+    message: input.message,
+    signature: input.signature as Hex,
+  });
+}

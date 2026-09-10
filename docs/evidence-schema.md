@@ -42,6 +42,8 @@ so a leaked field does not survive parsing.
 
 | eventType | Written when | `data` fields |
 |---|---|---|
+| `payee_consent` | the payee accepts or denies (P4) | `decision`, `signerAddress`, `signaturePresent`, `worldIdVerificationId`, `challengeTriggers` |
+| `world_id_check` | a live human proves continuity (P2/P5) | `verificationId`, `purpose`, `credential`, `party`, `nullifierMatchedEnrolment` |
 | `vendor_match` | matching completes during run-decision | `matched`, `score`, `reasonCode`, `matcher` (`fallback` \| `cre`) |
 | `decision` | the decision engine returns | `decision`, `reasonCode`, `matchScore`, `tierLimitApplied` |
 | `approval` | an approver confirms | `approverId`, `selfieCheckVerified`, `ledgerConfirmed` |
@@ -53,6 +55,17 @@ so a leaked field does not survive parsing.
 `vendor_match` and `decision` are written as **two records in causal order**, not
 one combined record: a single record would lose the distinction between "the
 match was wrong" and "the policy was wrong".
+
+`payee_consent` comes **before** both, because it authorises them. A chain
+showing a match with no consent ahead of it is describing a system with no gate,
+and that is exactly what the ordering is there to make visible.
+
+Two fields are deliberately absent. The consent **signature** stays on the
+`PayeeConsent` row: the chain records that one exists and which address produced
+it, which is what a dispute needs, and a second copy in an anchored structure
+buys nothing. The World ID **nullifier** is never written at all — it is a
+stable per-person identifier within an action, so publishing it would let anyone
+holding two records link the same human across payments.
 
 ## Write rule
 

@@ -27,6 +27,7 @@ import { identityRoutes } from "./modules/identity/routes.js";
 import { vendorRoutes } from "./modules/vendors/routes.js";
 import { walletRoutes } from "./modules/wallets/routes.js";
 import { paymentRoutes } from "./modules/payments/routes.js";
+import { consentRoutes } from "./modules/consent/routes.js";
 import { securityRoutes } from "./modules/securities/routes.js";
 import { evidenceRoutes } from "./modules/evidence/routes.js";
 import { exceptionRoutes } from "./modules/exceptions/routes.js";
@@ -120,6 +121,7 @@ export async function buildServer(config: Config = loadConfig()): Promise<Fastif
   await app.register(walletRoutes);
   await app.register(identityRoutes);
   await app.register(paymentRoutes);
+  await app.register(consentRoutes);
   await app.register(securityRoutes);
   await app.register(evidenceRoutes);
   await app.register(exceptionRoutes);

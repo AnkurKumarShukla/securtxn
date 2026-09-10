@@ -15,6 +15,25 @@ export const CreatePaymentRequest = z.object({
    * redirects the money.
    */
   vendorWalletId: Uuid,
+  /**
+   * The paying party. Both sides onboard through the same path, so a payer is
+   * a Vendor too — no second identity stack, and the payer's DigiLocker name is
+   * what the payee sees when asked to consent (P3).
+   */
+  payerVendorId: Uuid,
+  /**
+   * Who the sender BELIEVES they are paying, straight off the invoice.
+   *
+   * The address above is untrusted routing; this is the verification. Sent as
+   * plaintext over TLS and immediately reduced to digests server-side — it is
+   * never stored in the clear and never reaches the enclave (D62).
+   *
+   * Without it there is no claim to check, and the old code compared the
+   * payee's record to itself, which could never fail.
+   */
+  intendedPayeeName: z.string().min(1).max(200),
+  /** Indian PAN: 5 letters, 4 digits, 1 letter. GSTIN embeds it. */
+  intendedPayeePan: z.string().regex(/^[A-Za-z]{5}[0-9]{4}[A-Za-z]$/, "must be a valid PAN"),
   invoiceRef: z.string().min(1).max(100),
   amount: AmountString,
   token: z.string().min(1).max(20),
@@ -40,6 +59,14 @@ export const DecisionReasonCode = z.enum([
   "WALLET_NOT_CONFIRMED",
   "TIER_UNVERIFIED",
   "VENDOR_MATCH_FAILED",
+  /**
+   * The token itself has not been told this address may hold it (O8).
+   *
+   * Distinct from every other refusal here: the others are our policy, this
+   * one is the chain's. A transfer attempted anyway reverts on-chain, so
+   * surfacing it as a decision turns a failed transaction into an answer.
+   */
+  "ONCHAIN_KYC_NOT_GRANTED",
   "AMOUNT_EXCEEDS_TIER_LIMIT",
   "NEW_OR_CHANGED_ADDRESS",
   "ALL_CHECKS_PASSED",
@@ -50,6 +77,7 @@ export const DecisionResult = z.object({
   decision: PaymentDecision,
   reasonCode: DecisionReasonCode,
   /** Vendor-match confidence, 0–1. Null when the decision short-circuited. */
+  /** Null since D62 — digest matching is exact, so there is no score. */
   matchScore: z.number().min(0).max(1).nullable(),
   /**
    * Advisory only — it changes nothing about the decision above.

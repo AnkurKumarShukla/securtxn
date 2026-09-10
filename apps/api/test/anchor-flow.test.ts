@@ -33,6 +33,12 @@ beforeAll(async () => {
     ...base,
     NODE_ENV: "test",
     isProduction: false,
+    // Pinned, not inherited. The deployed default is `cre`, and letting the
+    // suite pick that up would drive every test through a live DON and a
+    // public tunnel — slow, flaky, and dependent on a Vault secret that
+    // expires. The fallback exists precisely so the tests do not need an
+    // enclave (D09), and one shared contract suite proves the two agree.
+    VENDOR_MATCHER: "fallback",
     RATE_LIMIT_MAX: 1_000_000,
     IDENTITY_PROVIDER: "mock",
     COMPLIANCE_GATEWAY: "mock",
@@ -74,6 +80,21 @@ afterAll(async () => {
   await prisma.vendor.deleteMany({ where: { id: vendorId } });
   // Anchors created by these runs. Left behind they would be swept into a
   // later suite's batch and make its record counts unpredictable.
+  //
+  // Release the records first. The anchoring job sweeps EVERY unanchored
+  // record, not just this suite's, so a batch here can end up owning evidence
+  // belonging to another suite's payment — and deleting the anchor then trips
+  // EvidenceRecord_anchorId_fkey. Detaching is right rather than cascading:
+  // those records are still valid evidence, they simply are not anchored any
+  // more, which is the true state once the anchor is gone.
+  const mockAnchors = await prisma.evidenceAnchor.findMany({
+    where: { topicId: "0.0.0" },
+    select: { id: true },
+  });
+  await prisma.evidenceRecord.updateMany({
+    where: { anchorId: { in: mockAnchors.map((a) => a.id) } },
+    data: { anchorId: null, hcsAnchorTxId: null },
+  });
   await prisma.evidenceAnchor.deleteMany({ where: { topicId: "0.0.0" } });
   await app?.close();
   await prisma.$disconnect();

@@ -77,3 +77,25 @@ export function nameSimilarity(left: string, right: string): number {
 
   return (2 * shared) / (a.size + b.size);
 }
+
+/**
+ * The canonical string an entity name is hashed as (D62).
+ *
+ * The CRE enclave has no crypto — `node:crypto` is banned and no WebCrypto
+ * global exists — so the match compares HMAC digests instead of decrypting
+ * anything. That only works if two spellings of the same company reduce to
+ * exactly one string.
+ *
+ * Dedupe + sort + join, because `nameSimilarity` compares token SETS: order and
+ * repetition never affected the score, so they must not affect the digest
+ * either. Without the sort, "Components Meridian" and "Meridian Components"
+ * would hash differently while having scored 1.0.
+ *
+ * Returns null when nothing distinguishing survives. "Private Limited" reduces
+ * to no tokens, and hashing the empty string would make every such name match
+ * every other — the same trap `nameSimilarity` avoids by returning 0.
+ */
+export function canonicalEntityName(value: string): string | null {
+  const tokens = [...new Set(normaliseEntityName(value))].sort();
+  return tokens.length === 0 ? null : tokens.join(" ");
+}

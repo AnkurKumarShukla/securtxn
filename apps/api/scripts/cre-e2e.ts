@@ -15,14 +15,31 @@
 //   pnpm --filter @cp/api cre:e2e
 //   dotenv -e ../../.env -- tsx scripts/cre-e2e.ts
 
+import { canonicalEntityName } from "@cp/cre-workflows";
 import { PrismaClient } from "@prisma/client";
 import { loadConfig } from "../src/config/index.js";
 import { createContainer } from "../src/container.js";
+import { hmac } from "../src/lib/crypto.js";
 import { GatewayRateLimitedError } from "../src/modules/vendorMatch/creGateway.js";
 
 const V = "00000000-0000-4000-8000-000000000001";
 const W = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const T = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+
+const NAME = "Meridian Components Pvt Ltd";
+const PAN = "ABCDE1234F";
+
+/**
+ * The digests, computed exactly as the API computes them (D62).
+ *
+ * The enclave has no crypto and never sees a name — it compares opaque bytes.
+ * So this script has to do the hashing the server does, with the server's
+ * pepper, or the two sides would disagree for reasons that have nothing to do
+ * with whether the workflow works.
+ */
+const base = loadConfig();
+const nameHmac = (value: string) => hmac(canonicalEntityName(value)!, base.HMAC_PEPPER);
+const panHmac = (value: string) => hmac(value, base.HMAC_PEPPER);
 
 /**
  * Each case names the verdict the deployed workflow must reach. The negative
@@ -34,7 +51,11 @@ const CASES = [
     expect: { match: true, reasonCode: "MATCHED" },
     input: {
       vendorId: V,
-      claimedLegalName: "MERIDIAN COMPONENTS PRIVATE LIMITED",
+      // A DIFFERENT spelling of the name on file. It matches only because the
+      // server canonicalises before hashing, which is the whole reason digest
+      // matching is usable at all.
+      claimedNameHmac: nameHmac("MERIDIAN COMPONENTS PRIVATE LIMITED"),
+      claimedPanHmac: panHmac(PAN),
       walletAddress: W,
       network: "ethereum",
       tokenContract: T,
@@ -45,17 +66,35 @@ const CASES = [
     expect: { match: false, reasonCode: "WALLET_NOT_ON_FILE" },
     input: {
       vendorId: V,
-      claimedLegalName: "Meridian Components Pvt Ltd",
+      claimedNameHmac: nameHmac(NAME),
+      claimedPanHmac: panHmac(PAN),
       walletAddress: "0x1234567890123456789012345678901234567890",
       network: "ethereum",
     },
   },
   {
-    label: "NAME_BELOW_THRESHOLD",
-    expect: { match: false, reasonCode: "NAME_BELOW_THRESHOLD" },
+    label: "IDENTITY_MISMATCH (name)",
+    expect: { match: false, reasonCode: "IDENTITY_MISMATCH" },
     input: {
       vendorId: V,
-      claimedLegalName: "Totally Different Corp",
+      claimedNameHmac: nameHmac("Totally Different Corp"),
+      claimedPanHmac: panHmac(PAN),
+      walletAddress: W,
+      network: "ethereum",
+      tokenContract: T,
+    },
+  },
+  {
+    label: "IDENTITY_MISMATCH (PAN)",
+    // The SAME reason code as a wrong name, deliberately. Reporting which
+    // field failed would give a prober a second bit and let them isolate the
+    // PAN by varying the name (D62). This case exists to prove the deployed
+    // workflow does not leak that bit either.
+    expect: { match: false, reasonCode: "IDENTITY_MISMATCH" },
+    input: {
+      vendorId: V,
+      claimedNameHmac: nameHmac(NAME),
+      claimedPanHmac: panHmac("ZZZZZ9999Z"),
       walletAddress: W,
       network: "ethereum",
       tokenContract: T,
@@ -66,7 +105,8 @@ const CASES = [
     expect: { match: false, reasonCode: "VENDOR_NOT_FOUND" },
     input: {
       vendorId: "00000000-0000-4000-8000-00000000dead",
-      claimedLegalName: "Nobody Ltd",
+      claimedNameHmac: nameHmac("Nobody Ltd"),
+      claimedPanHmac: panHmac("QQQQQ0000Q"),
       walletAddress: W,
       network: "ethereum",
     },
@@ -75,7 +115,6 @@ const CASES = [
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const base = loadConfig();
 const prisma = new PrismaClient({ datasources: { db: { url: base.DATABASE_URL } } });
 
 // Force the CRE path regardless of what .env selects, so this script always
@@ -84,6 +123,14 @@ const container = createContainer({ ...base, VENDOR_MATCHER: "cre" }, prisma);
 
 console.log(`workflow: ${base.CRE_WORKFLOW_ID}`);
 console.log(`gateway : ${base.CRE_GATEWAY_URL}\n`);
+
+// The fixture vendor predates D62 and has null digests, which the match rule
+// correctly treats as a refusal rather than a wildcard — so without this every
+// case would return IDENTITY_MISMATCH and the script would prove nothing.
+await prisma.vendor.update({
+  where: { id: V },
+  data: { legalNameHmac: nameHmac(NAME), panNumberHmac: panHmac(PAN) },
+});
 
 let failures = 0;
 
@@ -128,7 +175,7 @@ await prisma.$disconnect();
 
 console.log(
   failures === 0
-    ? "\nall four verdicts correct, produced by the deployed workflow"
+    ? "\nall ${CASES.length} verdicts correct, produced by the deployed workflow"
     : `\n${failures}/${CASES.length} cases wrong`,
 );
 process.exit(failures === 0 ? 0 : 1);

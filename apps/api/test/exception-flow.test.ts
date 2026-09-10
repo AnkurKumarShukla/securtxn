@@ -7,6 +7,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig, type Config } from "../src/config/index.js";
 import { buildServer } from "../src/server.js";
+import { consentToPayment } from "./fixtures/consent.js";
+import { clearWorldIdRows } from "./fixtures/worldid.js";
+import { fixtureOracle } from "./fixtures/oracle.js";
+import { createPayer } from "./fixtures/payer.js";
 import {
   ACK_TYPES,
   IDENTITY_BINDING_TYPES,
@@ -36,6 +40,7 @@ const base = loadConfig();
 const prisma = new PrismaClient({ datasources: { db: { url: base.DATABASE_URL } } });
 
 let app: FastifyInstance;
+let payerId: string;
 let token: string;
 const vendorIds: string[] = [];
 const CHAIN_ID = base.EIP712_CHAIN_ID;
@@ -46,14 +51,25 @@ beforeAll(async () => {
     ...base,
     NODE_ENV: "test",
     isProduction: false,
+    // Pinned, not inherited. The deployed default is `cre`, and letting the
+    // suite pick that up would drive every test through a live DON and a
+    // public tunnel — slow, flaky, and dependent on a Vault secret that
+    // expires. The fallback exists precisely so the tests do not need an
+    // enclave (D09), and one shared contract suite proves the two agree.
+    VENDOR_MATCHER: "fallback",
     RATE_LIMIT_MAX: 1_000_000,
     IDENTITY_PROVIDER: "mock",
     DIGILOCKER_FIXTURE_DIR: REAL_FIXTURES,
     COMPLIANCE_GATEWAY: "mock",
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock",
   };
   app = await buildServer(config);
   await app.ready();
   token = await app.signToken("agent", "exception-flow-test");
+  payerId = await createPayer(prisma);
 });
 
 afterAll(async () => {
@@ -66,6 +82,11 @@ afterAll(async () => {
     .map((p) => p.recipientAck?.rawContextEncryptedRef)
     .filter((id): id is string => Boolean(id));
 
+  // PayeeConsent, Notification and the World ID rows all hold Restrict FKs or
+  // point at rows deleted below, so they go first.
+  await prisma.payeeConsent.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
+  await prisma.notification.deleteMany({ where: { vendorId: { in: vendorIds } } });
+  await clearWorldIdRows(prisma, vendorIds);
   await prisma.evidenceRecord.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
   await prisma.exceptionCase.deleteMany({ where: { paymentRequestId: { in: paymentIds } } });
   await prisma.recipientAcknowledgment.deleteMany({
@@ -188,6 +209,9 @@ async function sentPayment(vendorId: string, walletId: string, invoiceRef: strin
     payload: {
       vendorId,
       vendorWalletId: walletId,
+      payerVendorId: payerId,
+      intendedPayeeName: fixtureOracle().legalName,
+      intendedPayeePan: fixtureOracle().pan,
       invoiceRef,
       amount: "12500.5",
       token: "USDC",
@@ -196,6 +220,8 @@ async function sentPayment(vendorId: string, walletId: string, invoiceRef: strin
   });
   const paymentId = created.json().id as string;
 
+  // P4 gates P6: the payee has to accept before their identity is checked.
+  await consentToPayment(app, prisma, paymentId, vendorId, PAYEE, auth);
   await app.inject({ method: "POST", url: `/payments/${paymentId}/run-decision`, headers: auth() });
   const proposed = await app.inject({
     method: "POST",
@@ -275,6 +301,9 @@ describe.skipIf(!hasRealFixtures)("exception desk", () => {
       payload: {
         vendorId,
         vendorWalletId: walletId,
+        payerVendorId: payerId,
+        intendedPayeeName: fixtureOracle().legalName,
+        intendedPayeePan: fixtureOracle().pan,
         invoiceRef,
         amount: "12500.5",
         token: "USDC",
@@ -282,6 +311,7 @@ describe.skipIf(!hasRealFixtures)("exception desk", () => {
       },
     });
     const duplicateId = second.json().id as string;
+    await consentToPayment(app, prisma, duplicateId, vendorId, PAYEE, auth);
 
     const decision = await app.inject({
       method: "POST",
@@ -515,6 +545,9 @@ describe.skipIf(!hasRealFixtures)("recipient acknowledgment", () => {
       payload: {
         vendorId,
         vendorWalletId: walletId,
+        payerVendorId: payerId,
+        intendedPayeeName: fixtureOracle().legalName,
+        intendedPayeePan: fixtureOracle().pan,
         invoiceRef: `INV-DRAFT-${Date.now()}`,
         amount: "1",
         token: "USDC",

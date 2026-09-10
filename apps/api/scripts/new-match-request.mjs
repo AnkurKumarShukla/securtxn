@@ -10,17 +10,47 @@
 // Cases mirror the four verdict branches; see invoke-workflow.mjs.
 
 import { writeFileSync } from "node:fs";
+import { createHmac } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 
 const V = "00000000-0000-4000-8000-000000000001";
 const W = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const T = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 
+const PEPPER = process.env.HMAC_PEPPER;
+if (!PEPPER) throw new Error("HMAC_PEPPER is not set; run this through dotenv -e .env");
+
+// The same two functions the API applies before calling the enclave (D62).
+// Inlined rather than imported so this stays a plain .mjs script with no build
+// step; they must stay in step with apps/api/src/lib/crypto.ts and
+// packages/cre-workflows/src/scoring/nameScore.ts.
+const SUFFIXES = new Set([
+  "private", "pvt", "limited", "ltd", "llp", "inc", "incorporated", "corp",
+  "corporation", "company", "co", "plc", "gmbh", "sa", "srl", "bv", "nv", "ag", "pte",
+]);
+const hmacOf = (value) =>
+  createHmac("sha256", PEPPER).update(value.trim().toUpperCase()).digest("hex");
+const canonicalName = (value) => {
+  const tokens = value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const kept = tokens.filter((t) => !SUFFIXES.has(t));
+  // NULL when nothing distinguishing survives ("Pvt Ltd"). The real
+  // canonicaliser refuses these rather than returning a digest that would
+  // match every other suffix-only name, and a copy that quietly differed here
+  // would be worse than no copy.
+  return kept.length === 0 ? null : [...new Set(kept)].sort().join(" ");
+};
+const nameHmac = (value) => {
+  const canonical = canonicalName(value);
+  if (canonical === null) throw new Error(`'${value}' has no distinguishing tokens to hash`);
+  return hmacOf(canonical);
+};
+const PAN = "ABCDE1234F";
+
 const CASES = {
-  MATCHED: { vendorId: V, claimedLegalName: "MERIDIAN COMPONENTS PRIVATE LIMITED", walletAddress: W, network: "ethereum", tokenContract: T },
-  WALLET_NOT_ON_FILE: { vendorId: V, claimedLegalName: "Meridian Components Pvt Ltd", walletAddress: "0x1234567890123456789012345678901234567890", network: "ethereum" },
-  NAME_BELOW_THRESHOLD: { vendorId: V, claimedLegalName: "Totally Different Corp", walletAddress: W, network: "ethereum", tokenContract: T },
-  VENDOR_NOT_FOUND: { vendorId: "00000000-0000-4000-8000-00000000dead", claimedLegalName: "Nobody Ltd", walletAddress: W, network: "ethereum" },
+  MATCHED: { vendorId: V, claimedNameHmac: nameHmac("MERIDIAN COMPONENTS PRIVATE LIMITED"), claimedPanHmac: hmacOf(PAN), walletAddress: W, network: "ethereum", tokenContract: T },
+  WALLET_NOT_ON_FILE: { vendorId: V, claimedNameHmac: nameHmac("Meridian Components Pvt Ltd"), claimedPanHmac: hmacOf(PAN), walletAddress: "0x1234567890123456789012345678901234567890", network: "ethereum" },
+  IDENTITY_MISMATCH: { vendorId: V, claimedNameHmac: nameHmac("Totally Different Corp"), claimedPanHmac: hmacOf(PAN), walletAddress: W, network: "ethereum", tokenContract: T },
+  VENDOR_NOT_FOUND: { vendorId: "00000000-0000-4000-8000-00000000dead", claimedNameHmac: nameHmac("Nobody Ltd"), claimedPanHmac: hmacOf("QQQQQ0000Q"), walletAddress: W, network: "ethereum" },
 };
 
 const which = process.argv[2] ?? "MATCHED";

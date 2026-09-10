@@ -12,12 +12,16 @@
 // Spec: docs/architecture.md §4.8
 
 import { z } from "zod";
-import { ExceptionType, PaymentDecision } from "./enums.js";
+import { ExceptionType, PayeeConsentDecision, PaymentDecision } from "./enums.js";
 import { AmountString, Bytes32, EvmAddress, IsoDateTime, Bytes32Hex, Uuid } from "./primitives.js";
 import { AcknowledgmentMethod } from "./enums.js";
 import { DecisionReasonCode } from "./payment.js";
 
 export const EvidenceEventType = z.enum([
+  /** P4: the payee accepted or denied being paid — and being verified. */
+  "payee_consent",
+  /** P2/P5: a live human proved continuity with an earlier enrolment. */
+  "world_id_check",
   "vendor_match",
   "decision",
   "approval",
@@ -46,10 +50,56 @@ const base = { paymentRequestId: Uuid, timestamp: IsoDateTime };
 export const EvidencePayload = z.discriminatedUnion("eventType", [
   z.object({
     ...base,
+    eventType: z.literal("payee_consent"),
+    data: z.object({
+      decision: PayeeConsentDecision,
+      /**
+       * The address that signed. On-chain public data, and the whole point of
+       * the record: a dispute turns on WHICH key accepted, not on who claimed to.
+       */
+      signerAddress: EvmAddress.nullable(),
+      /** Absent on a denial — refusing needs no proof, accepting does. */
+      signaturePresent: z.boolean(),
+      /** The World ID check the risk engine demanded, when it demanded one (P5). */
+      worldIdVerificationId: Uuid.nullable(),
+      /** Which rules fired. Empty when the payee was not challenged. */
+      challengeTriggers: z.array(z.string()),
+    }),
+  }),
+  z.object({
+    ...base,
+    eventType: z.literal("world_id_check"),
+    data: z.object({
+      verificationId: Uuid,
+      /** ENROLLMENT or REVERIFICATION — assurance differs, so never inferred. */
+      purpose: z.string(),
+      /** "selfie", "orb", … The credential is what bounds the claim (D49b). */
+      credential: z.string(),
+      /**
+       * Whose check this was. Both sides verify at different points and a
+       * record that did not say which would be unreadable in a dispute.
+       */
+      party: z.enum(["sender", "payee"]),
+      /**
+       * NEVER the nullifier itself. It is a stable per-person identifier
+       * within an action, so publishing it in an anchored chain would let
+       * anyone holding two records link the same human across payments —
+       * exactly the correlation World ID's design avoids (design principle 2).
+       */
+      nullifierMatchedEnrolment: z.boolean(),
+    }),
+  }),
+  z.object({
+    ...base,
     eventType: z.literal("vendor_match"),
     data: z.object({
       matched: z.boolean(),
-      score: z.number().min(0).max(1),
+      /**
+       * Null since D62: the match compares HMAC digests, which are exact, so
+       * there is no meaningful number between 0 and 1. Kept nullable rather
+       * than removed so records written before the change stay readable.
+       */
+      score: z.number().min(0).max(1).nullable(),
       reasonCode: z.string(),
       /** Which implementation produced this — fallback or the CRE enclave (D09). */
       matcher: z.enum(["fallback", "cre"]),

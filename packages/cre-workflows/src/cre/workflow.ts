@@ -72,7 +72,6 @@ type HttpResponse = HTTP_CLIENT_PB.Response;
  */
 export type VendorMatchWorkflowConfig = {
   apiBaseUrl: string;
-  minScore: number;
   /**
    * ECDSA EVM keys permitted to invoke this trigger.
    *
@@ -200,11 +199,10 @@ function readVendor(response: HttpResponse): VendorRecord | typeof NOT_FOUND {
 function verdict(
   input: VendorMatchInput,
   vendor: VendorRecord | typeof NOT_FOUND,
-  minScore: number,
 ): VendorMatchResult {
   return vendor === NOT_FOUND
-    ? { match: false, score: 0, reasonCode: MATCH_REASONS.VENDOR_NOT_FOUND }
-    : evaluateMatch(input, vendor, minScore);
+    ? { match: false, reasonCode: MATCH_REASONS.VENDOR_NOT_FOUND }
+    : evaluateMatch(input, vendor);
 }
 
 /**
@@ -238,7 +236,7 @@ function matchVendorInTee(
     .sendRequest(runtime, lookupRequest(runtime.config, input.vendorId, secret.value))
     .result();
 
-  const result = verdict(input, readVendor(response), runtime.config.minScore);
+  const result = verdict(input, readVendor(response));
 
   // Only the verdict crosses out. The vendor record, the secret and every
   // intermediate value stay in the enclave — this single call is the whole
@@ -294,7 +292,7 @@ function matchVendorOnDon(
         .sendRequest(lookupRequest(runtime.config, input.vendorId, secret.value))
         .result();
 
-      const result = verdict(input, readVendor(response), runtime.config.minScore);
+      const result = verdict(input, readVendor(response));
 
       const ack = sendRequester
         .sendRequest(callbackRequest(runtime.config, input.requestId, secret.value, result))

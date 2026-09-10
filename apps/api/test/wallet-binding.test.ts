@@ -44,6 +44,12 @@ beforeAll(async () => {
     ...base,
     NODE_ENV: "test",
     isProduction: false,
+    // Pinned, not inherited. The deployed default is `cre`, and letting the
+    // suite pick that up would drive every test through a live DON and a
+    // public tunnel — slow, flaky, and dependent on a Vault secret that
+    // expires. The fallback exists precisely so the tests do not need an
+    // enclave (D09), and one shared contract suite proves the two agree.
+    VENDOR_MATCHER: "fallback",
     // The suite makes far more requests per minute from one address than a
     // real client would. Raised here rather than in the server, so production
     // rate limiting stays exactly as shipped.
@@ -652,6 +658,10 @@ describe.skipIf(!hasRealFixtures)("on-chain KYC grant (D40)", () => {
       IDENTITY_PROVIDER: "mock",
       DIGILOCKER_FIXTURE_DIR: REAL_FIXTURES,
       COMPLIANCE_GATEWAY: "mock",
+    // Pinned with the other two: the deployed default now broadcasts to Hedera
+    // testnet, and no unit test may spend real testnet funds or depend on a
+    // public network being up.
+    CHAIN_GATEWAY: "mock",
     });
     await app2.ready();
     const token = await app2.signToken("agent", "no-security-test");
