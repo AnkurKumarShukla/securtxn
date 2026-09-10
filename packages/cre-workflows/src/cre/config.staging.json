@@ -4,5 +4,5 @@
   "authorizedKeys": [
     "0x86CcBa4674db731CD922e46265cbBa1f5E75b5d5"
   ],
-  "confidential": false
+  "confidential": true
 }

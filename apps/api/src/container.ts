@@ -17,6 +17,8 @@ import { CreVendorMatcher } from "./modules/vendorMatch/CreVendorMatcher.js";
 import { invokeWorkflow } from "./modules/vendorMatch/creGateway.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { createVendorMatchRequestStore } from "./modules/vendorMatch/vendorMatchRequestStore.js";
+import { WorldIdService } from "./modules/worldid/service.js";
+import { HttpWorldIdProofVerifier } from "./modules/worldid/WorldIdProofVerifier.js";
 import { AtsComplianceGateway, MockComplianceGateway, type ComplianceGateway } from "@cp/contracts";
 import type { PrismaClient } from "@prisma/client";
 import type { IdentityProvider } from "./modules/identity/IdentityProvider.js";
@@ -32,6 +34,11 @@ export type Container = {
   tierThresholds: TierThresholds;
   /** On-chain KYC. Mock until the Hedera credentials and a security exist. */
   complianceGateway: ComplianceGateway;
+  /**
+   * Selfie Check continuity (B4, D49). Null when disabled — the routes then
+   * refuse with 503 rather than quietly behaving as if the check passed.
+   */
+  worldId: WorldIdService | null;
 };
 
 declare module "fastify" {
@@ -97,6 +104,21 @@ export function createContainer(
             issuerPrivateKey: config.ATS_ISSUER_PRIVATE_KEY,
           })
         : new MockComplianceGateway(),
+
+    // Requires BOTH the flag and an rp_id. Selfie Check is access-gated per app
+    // and the Portal exposes no way to read that flag, so this switch is ours
+    // (docs/world-id-feedback.md) — and it must be deliberate, never inferred.
+    worldId:
+      config.WORLD_FEATURE_FLAG_ENABLED && config.WORLD_RP_ID
+        ? new WorldIdService({
+            prisma,
+            expectedAction: config.WORLD_ACTION,
+            verifier: new HttpWorldIdProofVerifier({
+              rpId: config.WORLD_RP_ID,
+              baseUrl: config.WORLD_VERIFY_BASE_URL,
+            }),
+          })
+        : null,
   };
 }
 
@@ -151,6 +173,7 @@ async function containerPlugin(app: FastifyInstance): Promise<void> {
       vendorMatcher: app.config.VENDOR_MATCHER,
       sanctionsScreener: "stub",
       complianceGateway: app.container.complianceGateway.kind,
+      worldId: app.container.worldId ? "enabled" : "disabled",
     },
     "resolved swappable implementations",
   );

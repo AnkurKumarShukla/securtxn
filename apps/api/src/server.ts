@@ -33,6 +33,7 @@ import { approvalRoutes } from "./modules/approvals/routes.js";
 import { identityRegistryRoutes } from "./modules/internal/identity-registry.routes.js";
 import { vendorLookupRoutes } from "./modules/internal/vendor-lookup.routes.js";
 import { vendorMatchResultRoutes } from "./modules/internal/vendor-match-result.routes.js";
+import { worldIdRoutes } from "./modules/worldid/routes.js";
 import { healthRoutes } from "./modules/health/routes.js";
 import authPlugin from "./plugins/auth.js";
 import configPlugin from "./plugins/config.js";
@@ -124,6 +125,7 @@ export async function buildServer(config: Config = loadConfig()): Promise<Fastif
   await app.register(identityRegistryRoutes);
   await app.register(vendorLookupRoutes);
   await app.register(vendorMatchResultRoutes);
+  await app.register(worldIdRoutes);
 
 
   // Deliberately not calling app.ready() here: listen() readies it, and leaving

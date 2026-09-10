@@ -159,6 +159,28 @@ const EnvSchema = z
     /** Bound on awaiting the verdict callback. Observed executions settle in 4-7s. */
     CRE_MATCH_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
 
+    // --- World ID / Selfie Check (§4.6, B4, D49) ---
+    /**
+     * Selfie Check is ACCESS-GATED per app and the Portal exposes no way to read
+     * that flag (see docs/world-id-feedback.md), so this is our own switch, not
+     * a mirror of theirs. Off means the routes still exist but refuse — the
+     * control is absent loudly rather than silently passing.
+     */
+    WORLD_FEATURE_FLAG_ENABLED: booleanish.default("false"),
+    /** From the Developer Portal. Public identifiers, not secrets. */
+    WORLD_RP_ID: z.string().optional(),
+    /**
+     * The action every proof must carry.
+     *
+     * CONSTANT BY DESIGN. The nullifier is action-scoped, so enrollment and
+     * every later continuity check must use the same string or the same human
+     * yields different nullifiers and continuity breaks silently — which would
+     * look like fraud detection working (D49).
+     */
+    WORLD_ACTION: z.string().default("verify-payment-approver"),
+    /** Overridable so tests never reach the live verifier. */
+    WORLD_VERIFY_BASE_URL: z.string().default("https://developer.world.org/api/v4/verify"),
+
     // --- Hedera ATS (§4.5, D40/D42) ---
     /** 296 = Hedera testnet, 295 = mainnet. */
     HEDERA_CHAIN_ID: z.coerce.number().int().positive().default(296),
