@@ -13,4 +13,5 @@ export * from "./evidence.js";
 export * from "./exception.js";
 export * from "./settlement.js";
 export * from "./consent.js";
+export * from "./eip712.js";
 export * from "./security.js";

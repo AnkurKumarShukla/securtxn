@@ -229,6 +229,38 @@ const EnvSchema = z
       .optional(),
     /** The deployed security (diamond) address KYC is granted against. */
     ATS_SECURITY_ID: z.string().optional(),
+
+    /**
+     * Symbol → EVM address, for tokens that are NOT issued by this platform.
+     *
+     * A stablecoin like USDC is somebody else's contract: there is no Security
+     * row for it and no wallet-level override that belongs on every payee. On
+     * Hedera an HTS token is reachable at its own EVM address and answers the
+     * ERC-20 interface, so once the symbol resolves, the existing transfer path
+     * works unchanged.
+     *
+     * JSON, e.g. {"USDC":"0x0000000000000000000000000000000000001549"}.
+     */
+    TOKEN_ADDRESSES: z
+      .string()
+      .default("{}")
+      .transform((raw, ctx) => {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, string>;
+          for (const [symbol, address] of Object.entries(parsed)) {
+            if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `TOKEN_ADDRESSES['${symbol}'] is not an EVM address: ${address}`,
+              });
+            }
+          }
+          return parsed;
+        } catch {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TOKEN_ADDRESSES must be JSON" });
+          return {};
+        }
+      }),
     /** Hedera account id for the issuer, e.g. "0.0.10443799". */
     ATS_ISSUER_ACCOUNT_ID: z
       .string()

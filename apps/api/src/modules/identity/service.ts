@@ -89,11 +89,39 @@ export class IdentityService {
     // One DigiLocker account may back exactly one vendor. Two vendors sharing
     // an identity is either a duplicate registration or an attempt to reuse
     // someone else's completed KYC (D03).
+    //
+    // But "already registered" has two very different causes, and treating them
+    // the same made the rule unusable. An ABANDONED attempt — a vendor row that
+    // claimed the identity and then never reached a confirmed wallet — is the
+    // common one: the person closed the tab, granted the wrong documents, or
+    // hit an error, and every later attempt was refused with no way forward
+    // except deleting rows by hand. That is not something a production support
+    // desk should have to do, and it is not something a user can do at all.
+    //
+    // So an identity held by an attempt that was never completed TRANSFERS to
+    // the vendor completing it now. Nothing was built on the old row: no
+    // confirmed wallet means no credential, no grant, no payment. The refusal
+    // stays for the case it was written for — an identity backing a vendor that
+    // actually finished — because that is a genuine duplicate or a reuse of
+    // someone else's KYC.
     const existing = await this.deps.prisma.vendor.findUnique({
       where: { digilockerUserId: identity.providerUserId },
+      include: { wallets: { select: { status: true } } },
     });
+
     if (existing && existing.id !== vendorId) {
-      throw new ConflictError("This identity is already registered to another vendor");
+      const completed = existing.wallets.some((w) => w.status === "CONFIRMED");
+      if (completed) {
+        throw new ConflictError("This identity is already registered to another vendor");
+      }
+
+      // Released, not deleted: the abandoned vendor keeps its row and its
+      // audit trail, it simply stops claiming an identity it never finished
+      // proving.
+      await this.deps.prisma.vendor.update({
+        where: { id: existing.id },
+        data: { digilockerUserId: null },
+      });
     }
 
     const now = new Date();

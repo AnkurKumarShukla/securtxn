@@ -38,6 +38,26 @@ export type ConsentServiceDeps = {
   config: Config;
 };
 
+/**
+ * What each party's World ID proof is bound to.
+ *
+ * ROLE-QUALIFIED, not the bare payment id. The two checks authorise different
+ * things — "I raised this payment" and "I accept this payment" — and the
+ * nullifier table is unique on (nullifier, action, signal). With a bare payment
+ * id those are the same signal, so a single human acting as both sides collides
+ * with themselves and the second proof is refused as a replay.
+ *
+ * That is not only a demo problem: it is the correct reading of what a signal
+ * is for. Two different authorisations should not share one.
+ */
+export function senderSignal(paymentId: string): string {
+  return `sender:${paymentId}`;
+}
+
+export function payeeSignal(paymentId: string): string {
+  return `payee:${paymentId}`;
+}
+
 export class ConsentService {
   constructor(private readonly deps: ConsentServiceDeps) {}
 
@@ -220,7 +240,16 @@ export class ConsentService {
       // picture can change between asking and answering, and the client is on
       // the far side of that boundary.
       challenge = await this.assess(payment);
-      if (challenge.required) {
+
+      // Gated on the same flag as the sender's check (P2), and for the same
+      // reason: when World ID is switched off the routes that mint these
+      // verifications refuse, so demanding one would not make payments safer —
+      // it would make every payment impossible to accept.
+      //
+      // Leaving this ungated while P2 was gated meant a deployment with the
+      // flag off passed P2 and then dead-ended at P4, which is the worst of
+      // both: the control is absent AND the flow is broken.
+      if (challenge.required && this.deps.config.WORLD_FEATURE_FLAG_ENABLED) {
         payeeCheck = await this.requireWorldIdCheck(
           payment.vendorId,
           payment.id,
@@ -305,14 +334,14 @@ export class ConsentService {
     if (!this.deps.config.WORLD_FEATURE_FLAG_ENABLED) return null;
 
     const check = await this.deps.prisma.worldIdVerification.findFirst({
-      where: { subject: payerVendorId, signal: paymentId, purpose: "REVERIFICATION" },
+      where: { subject: payerVendorId, signal: senderSignal(paymentId), purpose: "REVERIFICATION" },
       orderBy: { verifiedAt: "desc" },
     });
 
     if (!check) {
       throw new UnprocessableError(
         "The sender must pass a World ID check for this payment before the payee is asked. " +
-          "Verify with signal = the payment id (POST /world-id/verify).",
+          `Verify with signal = "${senderSignal(paymentId)}" (POST /world-id/verify).`,
       );
     }
 
@@ -362,7 +391,8 @@ export class ConsentService {
   ): Promise<WorldIdCheckEvidence> {
     if (!verificationId) {
       throw new UnprocessableError(
-        "This payment requires the payee to pass a World ID check before accepting",
+        "This payment requires the payee to pass a World ID check before accepting. " +
+          `Verify with signal = "${payeeSignal(paymentId)}" (POST /world-id/verify).`,
       );
     }
 
@@ -371,7 +401,7 @@ export class ConsentService {
     });
     if (!verification) throw new NotFoundError(`World ID verification '${verificationId}'`);
 
-    if (verification.signal !== paymentId) {
+    if (verification.signal !== payeeSignal(paymentId)) {
       throw new ForbiddenError("That World ID check was taken for a different payment");
     }
     if (verification.purpose !== "REVERIFICATION") {

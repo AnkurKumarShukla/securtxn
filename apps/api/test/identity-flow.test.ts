@@ -260,11 +260,8 @@ describe.skipIf(!hasRealFixtures)("identity flow end to end", () => {
     expect(photo.subarray(0, 3).toString("hex")).toBe("ffd8ff");
   });
 
-  it("refuses to attach one DigiLocker identity to a second vendor", async () => {
-    // Either a duplicate registration or an attempt to reuse someone else's
-    // completed KYC (D03).
-    const vendorId = await newVendor();
-
+  /** Drives a vendor through session → consent → complete. */
+  async function completeIdentity(vendorId: string) {
     const started = await app.inject({
       method: "POST",
       url: `/vendors/${vendorId}/identity/session`,
@@ -273,14 +270,63 @@ describe.skipIf(!hasRealFixtures)("identity flow end to end", () => {
     });
     const { sessionId } = started.json();
     await app.inject({ method: "GET", url: `/dev/identity/consent?session_id=${sessionId}` });
-
-    const res = await app.inject({
+    return app.inject({
       method: "POST",
       url: `/vendors/${vendorId}/identity/complete`,
       headers: { authorization: auth.authorization() },
     });
+  }
+
+  it("refuses an identity that already backs a COMPLETED vendor", async () => {
+    // The case the rule was written for: reusing someone else's finished KYC,
+    // or registering the same party twice. A confirmed wallet is what makes a
+    // vendor "finished" — it means a credential and possibly an on-chain grant
+    // were issued against that identity.
+    const holder = await prisma.vendor.findFirstOrThrow({
+      where: { digilockerUserId: { not: null } },
+    });
+    await prisma.vendorWallet.create({
+      data: {
+        vendorId: holder.id,
+        address: "0x1111111111111111111111111111111111111111",
+        network: "ethereum",
+        version: 1,
+        status: "CONFIRMED",
+        confirmedAt: new Date(),
+      },
+    });
+
+    const res = await completeIdentity(await newVendor());
+
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("CONFLICT");
+  });
+
+  it("transfers an identity away from an ABANDONED attempt", async () => {
+    // The case that made the rule unusable in practice. Someone closes the tab,
+    // grants the wrong documents, or hits an error: the vendor row keeps the
+    // identity, every retry is refused, and the only fix was deleting rows by
+    // hand — which a support desk should not have to do and a user cannot.
+    //
+    // Nothing was built on the abandoned row (no confirmed wallet means no
+    // credential and no grant), so the identity moves to the vendor completing
+    // it now.
+    const abandoned = await prisma.vendor.findFirstOrThrow({
+      where: { digilockerUserId: { not: null } },
+    });
+    await prisma.vendorWallet.deleteMany({ where: { vendorId: abandoned.id } });
+
+    const retry = await newVendor();
+    const res = await completeIdentity(retry);
+
+    expect(res.statusCode).toBe(200);
+
+    // The identity moved, and the abandoned vendor kept its row — released,
+    // not deleted, so its audit trail survives.
+    const after = await prisma.vendor.findUniqueOrThrow({ where: { id: abandoned.id } });
+    expect(after.digilockerUserId).toBeNull();
+    const now = await prisma.vendor.findUniqueOrThrow({ where: { id: retry } });
+    expect(now.digilockerUserId).not.toBeNull();
   });
 
   it("blocks the blob from being deleted while a vendor cites it", async () => {

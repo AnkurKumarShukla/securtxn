@@ -174,3 +174,65 @@ export const CredentialResponse = z.object({
   usable: z.boolean(),
 });
 export type CredentialResponse = z.infer<typeof CredentialResponse>;
+
+/**
+ * GET /vendors/:id/wallets/:walletId/identity-binding-message
+ *
+ * The exact struct the payee must sign for O5, handed back by the server.
+ *
+ * WHY THIS EXISTS. The binding covers the onboarding nonce, the DigiLocker
+ * user id and both document hashes — values only the server holds. Before this
+ * endpoint, the only way to assemble them was to read the database directly,
+ * which meant the test suite could complete onboarding and no real client
+ * could. That is not a gap a UI works around; it is a missing endpoint.
+ *
+ * Handing back the message rather than the raw fields also removes a drift
+ * risk: the client signs precisely what the verifier will rebuild, instead of
+ * reassembling the struct from parts and hoping the field order matches.
+ *
+ * Disclosing nothing new: every field below already appears inside the
+ * signature the client has to produce, and the document hashes are commitments,
+ * not documents (D42).
+ */
+export const IdentityBindingMessageResponse = z.object({
+  domain: z.object({
+    name: z.string(),
+    version: z.string(),
+    chainId: z.number().int(),
+  }),
+  primaryType: z.literal("IdentityBinding"),
+  message: z.object({
+    onboardingSessionNonce: z.string(),
+    digilockerUserId: z.string(),
+    walletAddress: EvmAddress,
+    aadhaarDocHash: z.string(),
+    panDocHash: z.string(),
+    statement: z.string(),
+  }),
+});
+export type IdentityBindingMessageResponse = z.infer<typeof IdentityBindingMessageResponse>;
+
+/**
+ * GET /vendors/:id/wallets/:walletId/callback-channels
+ *
+ * The contacts an operator may legitimately dial to confirm a wallet (D05).
+ *
+ * WHY THIS IS NOT A LEAK. The rule is that confirmation must reach a channel
+ * the REGISTRY or the identity flow already knew — never one the wallet
+ * submitter supplied, because an attacker who can pick the number can confirm
+ * their own wallet. Enforcing that means the operator has to be told which
+ * number to call, and before this endpoint that value lived only in the
+ * database: the test suite could confirm a wallet and no operator could.
+ *
+ * Agent-scoped, which is the platform operator, not the counterparty.
+ */
+export const CallbackChannelsResponse = z.object({
+  channels: z.array(
+    z.object({
+      value: z.string(),
+      /** REGISTRY_LOOKUP for a business, DIGILOCKER_VERIFIED_MOBILE for a person. */
+      source: z.string(),
+    }),
+  ),
+});
+export type CallbackChannelsResponse = z.infer<typeof CallbackChannelsResponse>;

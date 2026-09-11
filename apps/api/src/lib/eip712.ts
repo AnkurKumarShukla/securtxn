@@ -20,35 +20,47 @@
 
 import { verifyTypedData, type Address, type Hex } from "viem";
 
-export const DOMAIN_NAME = "ConfirmedPayee";
-export const DOMAIN_VERSION = "1";
+// The struct definitions live in @cp/shared-types so that the signers (the web
+// console, the approval bridge, the test suite) and this verifier cannot drift
+// apart: a signature is only valid if both sides hashed byte-identical structs,
+// and a second copy that merely reordered two fields would fail with no useful
+// error. Imported and re-exported here because this module is what the rest of
+// apps/api already imports.
+import {
+  ACK_STATEMENT,
+  ACK_TYPES,
+  CONTROL_STATEMENT,
+  DOMAIN_NAME,
+  DOMAIN_VERSION,
+  domainFor,
+  IDENTITY_BINDING_TYPES,
+  PAYEE_CONSENT_STATEMENT,
+  PAYEE_CONSENT_TYPES,
+  SECRET_RELEASE_STATEMENT,
+  SECRET_RELEASE_TYPES,
+  STATEMENT,
+  WALLET_CONTROL_TYPES,
+  type Eip712Domain,
+} from "@cp/shared-types";
 
-export const STATEMENT =
-  "I affirm this information is true and this wallet is mine.";
-
-export type Eip712Domain = {
-  name: string;
-  version: string;
-  chainId: number;
+export {
+  ACK_STATEMENT,
+  ACK_TYPES,
+  CONTROL_STATEMENT,
+  DOMAIN_NAME,
+  DOMAIN_VERSION,
+  domainFor,
+  IDENTITY_BINDING_TYPES,
+  PAYEE_CONSENT_STATEMENT,
+  PAYEE_CONSENT_TYPES,
+  SECRET_RELEASE_STATEMENT,
+  SECRET_RELEASE_TYPES,
+  STATEMENT,
+  WALLET_CONTROL_TYPES,
+  type Eip712Domain,
 };
 
-export function domainFor(chainId: number): Eip712Domain {
-  return { name: DOMAIN_NAME, version: DOMAIN_VERSION, chainId };
-}
-
 // --- wallet control proof --------------------------------------------------
-
-export const WALLET_CONTROL_TYPES = {
-  WalletControlProof: [
-    { name: "vendorId", type: "string" },
-    { name: "walletAddress", type: "address" },
-    { name: "network", type: "string" },
-    { name: "nonce", type: "bytes32" },
-    { name: "statement", type: "string" },
-  ],
-} as const;
-
-export const CONTROL_STATEMENT = "I control this wallet.";
 
 export type WalletControlMessage = {
   vendorId: string;
@@ -74,17 +86,6 @@ export function buildWalletControlMessage(input: {
 }
 
 // --- identity binding ------------------------------------------------------
-
-export const IDENTITY_BINDING_TYPES = {
-  IdentityBinding: [
-    { name: "onboardingSessionNonce", type: "bytes32" },
-    { name: "digilockerUserId", type: "string" },
-    { name: "walletAddress", type: "address" },
-    { name: "aadhaarDocHash", type: "bytes32" },
-    { name: "panDocHash", type: "bytes32" },
-    { name: "statement", type: "string" },
-  ],
-} as const;
 
 export type IdentityBindingMessage = {
   onboardingSessionNonce: Hex;
@@ -168,17 +169,6 @@ function withPrefix(hash: string): Hex {
  * leg would provide automatically by requiring a preimage reveal (D41) — this
  * is the manual path, and both verify with the code below.
  */
-export const ACK_TYPES = {
-  RecipientAcknowledgment: [
-    { name: "paymentRequestId", type: "string" },
-    { name: "recipientAddress", type: "address" },
-    { name: "commitment", type: "bytes32" },
-    { name: "statement", type: "string" },
-  ],
-} as const;
-
-export const ACK_STATEMENT = "I acknowledge receipt of this payment.";
-
 export type AcknowledgmentMessage = {
   paymentRequestId: string;
   recipientAddress: Address;
@@ -228,17 +218,6 @@ export async function verifyAcknowledgment(input: {
  * `lockId` is in the payload so a signature captured for one escrow cannot be
  * replayed to open the next one for the same payee.
  */
-export const SECRET_RELEASE_TYPES = {
-  SecretRelease: [
-    { name: "paymentRequestId", type: "string" },
-    { name: "recipientAddress", type: "address" },
-    { name: "lockId", type: "bytes32" },
-    { name: "statement", type: "string" },
-  ],
-} as const;
-
-export const SECRET_RELEASE_STATEMENT = "I am the payee and I am collecting this payment.";
-
 export type SecretReleaseMessage = {
   paymentRequestId: string;
   recipientAddress: Address;
@@ -297,20 +276,6 @@ export async function verifySecretRelease(input: {
  * it through a float on the way to being signed would let the signed value and
  * the stored value disagree.
  */
-export const PAYEE_CONSENT_TYPES = {
-  PayeeConsent: [
-    { name: "paymentRequestId", type: "string" },
-    { name: "payeeAddress", type: "address" },
-    { name: "amount", type: "string" },
-    { name: "token", type: "string" },
-    { name: "invoiceRef", type: "string" },
-    { name: "statement", type: "string" },
-  ],
-} as const;
-
-export const PAYEE_CONSENT_STATEMENT =
-  "I accept this payment and consent to verification of my identity for it.";
-
 export type PayeeConsentMessage = {
   paymentRequestId: string;
   payeeAddress: Address;

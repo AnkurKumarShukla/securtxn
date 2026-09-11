@@ -88,6 +88,27 @@ export class DigiLockerProvider implements IdentityProvider {
   }
 
   async fetchIdentity(sessionId: string): Promise<IdentityResult> {
+    // What the human ACTUALLY granted, checked before fetching anything.
+    //
+    // A partial consent — Aadhaar granted, PAN not — otherwise surfaces as an
+    // opaque "documents/pan failed with HTTP 400" from the aggregator, which
+    // says nothing about what to do. It also wastes a billed document call on a
+    // request that cannot succeed.
+    //
+    // `/status` is one of the two endpoints that is NOT billed, so this costs
+    // nothing, and the list of document TYPES is not identity data (D06).
+    const { consented } = await this.getStatus(sessionId);
+    const missing = (["aadhaar", "pan"] as const).filter((doc) => !consented.includes(doc));
+    if (missing.length > 0) {
+      throw new UnprocessableError(
+        `DigiLocker consent is missing: ${missing.join(", ")}. ` +
+          `Granted: ${consented.join(", ") || "nothing"}. ` +
+          "Both Aadhaar and PAN are required — the PAN is what the payee match compares. " +
+          "Start the identity step again and tick BOTH documents on the DigiLocker screen. " +
+          "If PAN is not offered there, that DigiLocker account has no PAN linked to it.",
+      );
+    }
+
     const [aadhaarXml, panXml, profile] = await Promise.all([
       this.fetchDocument(sessionId, "aadhaar"),
       this.fetchDocument(sessionId, "pan"),
@@ -224,12 +245,19 @@ export class DigiLockerProvider implements IdentityProvider {
     const text = await response.text();
 
     if (!response.ok) {
-      // The body can echo submitted identity data, so it is never included in
-      // the error surfaced to a caller or a log (D06).
+      // `data` can echo submitted identity data and never leaves this method
+      // (D06). The ENVELOPE around it cannot: `code`, `message` and
+      // `transaction_id` are the aggregator's own status fields.
+      //
+      // Withholding those cost a long debugging session — an "Insufficient
+      // credits" quota failure surfaced as a bare "HTTP 403", which reads like
+      // a permissions problem with the user's documents and sent us looking at
+      // the wrong end of the system entirely. A status code is not a secret,
+      // and the transaction id is what support asks for first.
       throw new AppError(
         response.status === 429 ? 429 : 502,
         "IDENTITY_PROVIDER_ERROR",
-        `DigiLocker ${path} failed with HTTP ${response.status}`,
+        `DigiLocker ${path} failed with HTTP ${response.status}${describeFailure(text)}`,
       );
     }
 
@@ -268,5 +296,28 @@ function normaliseStatus(status: string): SessionStatus {
       return status;
     default:
       return "failed";
+  }
+}
+
+/**
+ * The envelope's status fields, for an error message. Never `data`.
+ *
+ * Deliberately picks named fields rather than filtering a blob: a denylist
+ * would leak whatever the aggregator adds next, an allowlist cannot.
+ */
+function describeFailure(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as {
+      message?: unknown;
+      transaction_id?: unknown;
+    };
+    const message = typeof parsed.message === "string" ? parsed.message.slice(0, 200) : null;
+    const txn = typeof parsed.transaction_id === "string" ? parsed.transaction_id : null;
+    if (!message && !txn) return "";
+    return ` — ${message ?? "no message"}${txn ? ` (transaction ${txn})` : ""}`;
+  } catch {
+    // A non-JSON body is usually a gateway or proxy page; its content is not
+    // ours and may be anything, so it is not repeated.
+    return "";
   }
 }

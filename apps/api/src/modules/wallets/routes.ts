@@ -2,6 +2,8 @@
 // Spec: docs/architecture.md §4.1
 
 import {
+  CallbackChannelsResponse,
+  IdentityBindingMessageResponse,
   CallbackConfirmRequest,
   ControlProofRequest,
   CredentialResponse,
@@ -78,6 +80,47 @@ export const walletRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (request) =>
       service.submitControlProof(request.params.id, request.params.walletId, request.body.signature),
+  );
+
+  app.get(
+    "/vendors/:id/wallets/:walletId/callback-channels",
+    {
+      preHandler: app.requireRole("agent"),
+      schema: {
+        tags: ["wallets"],
+        summary: "Contacts an operator may dial to confirm this wallet (O6)",
+        description:
+          "Confirmation must reach a channel the registry or the identity flow already " +
+          "knew, never one the submitter supplied. That means the operator has to be told " +
+          "which number to call — and before this endpoint that value existed only in the " +
+          "database, so the test suite could confirm a wallet and no operator could.",
+        security: [{ bearerAuth: [] }],
+        params: WalletParams,
+        response: { 200: CallbackChannelsResponse },
+      },
+    },
+    async (request) => service.callbackChannels(request.params.id, request.params.walletId),
+  );
+
+  app.get(
+    "/vendors/:id/wallets/:walletId/identity-binding-message",
+    {
+      preHandler: app.requireRole("agent"),
+      schema: {
+        tags: ["wallets"],
+        summary: "The exact struct to sign for the identity binding (O5)",
+        description:
+          "The binding covers values only the server holds — the onboarding nonce, " +
+          "the DigiLocker user id and both document hashes. Without this endpoint the " +
+          "only way to assemble them was to read the database, so onboarding could be " +
+          "completed by the test suite and by no real client.",
+        security: [{ bearerAuth: [] }],
+        params: WalletParams,
+        response: { 200: IdentityBindingMessageResponse },
+      },
+    },
+    async (request) =>
+      service.identityBindingMessage(request.params.id, request.params.walletId),
   );
 
   app.post(

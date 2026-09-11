@@ -16,7 +16,9 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient, type Vendor, type VendorWallet } from "@prisma/client";
 import type {
   CallbackConfirmRequest,
+  CallbackChannelsResponse,
   CredentialResponse,
+  IdentityBindingMessageResponse,
   RegisterWalletRequest,
   RegisterWalletResponse,
   WalletSummary,
@@ -27,10 +29,11 @@ import { decrypt } from "../../lib/crypto.js";
 import {
   buildIdentityBindingMessage,
   buildWalletControlMessage,
+  domainFor,
   verifyIdentityBinding,
   verifyWalletControl,
 } from "../../lib/eip712.js";
-import { checkCallbackChannel } from "./callback-guard.js";
+import { checkCallbackChannel, independentContactsFor } from "./callback-guard.js";
 import type { ComplianceGateway } from "@cp/contracts";
 import { issueCredential, isUsable, type CredentialClaims } from "../../lib/vc.js";
 
@@ -139,6 +142,61 @@ export class WalletService {
    * against a different onboarding attempt, a different identity, or a
    * different set of documents (D03).
    */
+  /**
+   * The struct the payee has to sign for O5 (D03).
+   *
+   * Built from the SAME `buildIdentityBindingMessage` the verifier uses, so a
+   * client that signs what this returns cannot produce a signature the
+   * verification step then rebuilds differently.
+   */
+  async identityBindingMessage(
+    vendorId: string,
+    walletId: string,
+  ): Promise<IdentityBindingMessageResponse> {
+    const { vendor, wallet } = await this.requirePair(vendorId, walletId);
+
+    if (!vendor.digilockerUserId || !vendor.aadhaarDocHash || !vendor.panDocHash) {
+      throw new UnprocessableError(
+        "Identity verification must complete before a wallet can be bound to it",
+      );
+    }
+    if (!vendor.onboardingSessionNonce) {
+      throw new UnprocessableError("Vendor has no onboarding nonce");
+    }
+    if (wallet.controlProofNonce !== vendor.onboardingSessionNonce) {
+      throw new UnprocessableError(
+        "Wallet and identity carry different onboarding nonces; they may belong to different people",
+      );
+    }
+
+    return {
+      domain: domainFor(this.deps.config.EIP712_CHAIN_ID),
+      primaryType: "IdentityBinding" as const,
+      message: buildIdentityBindingMessage({
+        onboardingSessionNonce: vendor.onboardingSessionNonce,
+        digilockerUserId: vendor.digilockerUserId,
+        walletAddress: wallet.address,
+        aadhaarDocHash: vendor.aadhaarDocHash,
+        panDocHash: vendor.panDocHash,
+      }),
+    };
+  }
+
+  /**
+   * What an operator may dial to confirm this wallet (D05).
+   *
+   * Uses the SAME `independentContactsFor` the confirmation check uses, so the
+   * list an operator is shown cannot differ from the list that will be accepted.
+   */
+  async callbackChannels(
+    vendorId: string,
+    walletId: string,
+  ): Promise<CallbackChannelsResponse> {
+    const { vendor } = await this.requirePair(vendorId, walletId);
+    const channels = independentContactsFor(vendor, this.decryptPhone(vendor));
+    return { channels: channels.map((c) => ({ value: c.value, source: c.source })) };
+  }
+
   async submitIdentityBinding(
     vendorId: string,
     walletId: string,

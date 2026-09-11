@@ -85,6 +85,26 @@ export class PaymentSettler {
     const baseUnits = toBaseUnits(payment.amount.toString(), decimals);
     const payee = payment.vendorWallet.address as Address;
 
+    // Checked BEFORE broadcasting. An under-funded treasury reverts on chain,
+    // which costs gas and arrives as an opaque "transfer reverted" — a 500 that
+    // reads like a platform fault when it is an operational one. A balance read
+    // is free and names the actual problem.
+    if (this.deps.chain.broadcasts) {
+      const held = await this.deps.chain.balanceOf(token, this.deps.chain.treasuryAddress);
+      if (held < baseUnits) {
+        const scale = (v: bigint) => {
+          const unit = 10n ** BigInt(decimals);
+          return decimals === 0
+            ? v.toString()
+            : `${v / unit}.${(v % unit).toString().padStart(decimals, "0")}`;
+        };
+        throw new UnprocessableError(
+          `The treasury holds ${scale(held)} ${payment.token} but this payment needs ` +
+            `${scale(baseUnits)}. Fund ${this.deps.chain.treasuryAddress} before settling.`,
+        );
+      }
+    }
+
     return payment.settlementMode === "HTLC"
       ? this.settleThroughEscrow({ payment, token, decimals, baseUnits, payee, input, approverId })
       : this.settleDirectly({ payment, token, baseUnits, payee, approverId });
@@ -479,14 +499,25 @@ export class PaymentSettler {
   private async resolveToken(symbol: string, walletToken: string | null): Promise<Address> {
     if (walletToken) return walletToken as Address;
 
+    // A security this platform issued.
     const security = await this.deps.prisma.security.findFirst({
       where: { symbol },
       orderBy: { createdAt: "desc" },
     });
     if (security) return security.evmAddress as Address;
 
+    // A token somebody else issued — a stablecoin. On Hedera an HTS token is
+    // reachable at its own EVM address and answers the ERC-20 interface, which
+    // is exactly what the transfer path already calls, so nothing below this
+    // point needs to know the difference.
+    const configured = this.deps.config.TOKEN_ADDRESSES[symbol.toUpperCase()];
+    if (configured) return configured as Address;
+
+    const known = Object.keys(this.deps.config.TOKEN_ADDRESSES);
     throw new UnprocessableError(
-      `No token contract for '${symbol}': set the wallet's tokenContract, or issue a security with that symbol`,
+      `No token contract for '${symbol}'. Configure it in TOKEN_ADDRESSES` +
+        `${known.length ? ` (currently: ${known.join(", ")})` : ""}` +
+        ", set the wallet's tokenContract, or issue a security with that symbol.",
     );
   }
 }
