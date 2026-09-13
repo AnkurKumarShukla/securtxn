@@ -77,8 +77,13 @@ services:
       # derived from PUBLIC_BASE_URL happened to be right. Split across two
       # services it is not, and the derived default would strand every user on
       # a 404 at the one moment they cannot retry — after granting consent.
+      # www, NOT the apex. securtxn.com 301s to www.securtxn.com, so www is the
+      # origin a user is actually on — and the two are separate origins for
+      # localStorage, where the wallet key and payee session live. A redirect
+      # landing on the other one would hand the user a page that cannot find
+      # their wallet.
       - key: DIGILOCKER_REDIRECT_URL
-        value: https://securtxn-web.onrender.com/identity/callback
+        value: https://www.securtxn.com/identity/callback
 
       # --- set in the dashboard; never in git -------------------------------
       - key: DATABASE_URL # MUST be the Supabase SESSION POOLER. The direct host
@@ -198,7 +203,7 @@ services:
       # localhost:3001: the day a page calls this host directly, the failure is
       # a blocked preflight with no server-side log to find it by.
       - key: CORS_ORIGINS
-        value: https://securtxn-web.onrender.com
+        value: https://www.securtxn.com,https://securtxn-web.onrender.com
 
   # ---------------------------------------------------------------- WEB -----
   - type: web
