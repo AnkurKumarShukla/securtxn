@@ -18,6 +18,7 @@
     "db:studio": "dotenv -e ../../.env -- prisma studio",
     "mint:token": "dotenv -e ../../.env -- tsx scripts/mint-token.ts",
     "flow:smoke": "dotenv -e ../../.env -- tsx scripts/flow-smoke.ts",
+    "reset:demo": "dotenv -e ../../.env -- tsx scripts/reset-demo.ts",
     "cre:e2e": "dotenv -e ../../.env -- tsx scripts/cre-e2e.ts",
     "cre:request": "dotenv -e ../../.env -- node scripts/new-match-request.mjs",
     "cre:show": "dotenv -e ../../.env -- node scripts/show-match-request.mjs",
