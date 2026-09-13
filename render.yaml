@@ -3,6 +3,10 @@
 # Two services: the API and the web app. The keep-alive pinger is external —
 # Render's cron jobs are paid-only — and is described at the bottom of this file.
 #
+# WHY npx pnpm AND NOT corepack. Render's image ships pnpm at /usr/bin/pnpm on a
+# read-only filesystem, so `corepack enable` fails with EROFS trying to replace
+# it. Invoking a pinned pnpm through npx needs no global install at all.
+#
 # WHY THE API STARTS WITH tsx AND NOT `node dist/`. `tsc -p apps/api` compiles
 # apps/api alone; the workspace packages it imports are TypeScript source using
 # NodeNext ".js" specifiers, so the built output resolves
@@ -29,10 +33,15 @@ services:
     region: singapore # Same region as the Supabase project (ap-southeast-1), so
       # every query does not cross an ocean.
     branch: main
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @cp/api exec prisma generate
-    startCommand: pnpm --filter @cp/api start
+    buildCommand: npx --yes pnpm@9.12.0 install --frozen-lockfile && npx --yes pnpm@9.12.0 --filter @cp/api exec prisma generate
+    startCommand: npx --yes pnpm@9.12.0 --filter @cp/api start
     healthCheckPath: /health
     envVars:
+      # Pinned, not a range. `engines: >=20.11` let Render choose 26.8.2, a
+      # major this has never been built or tested on. This is the version every
+      # local run used.
+      - key: NODE_VERSION
+        value: 24.13.1
       - key: NODE_ENV
         value: production
       - key: HOST
@@ -104,9 +113,11 @@ services:
     plan: free
     region: singapore
     branch: main
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @cp/web build
-    startCommand: pnpm --filter @cp/web start
+    buildCommand: npx --yes pnpm@9.12.0 install --frozen-lockfile && npx --yes pnpm@9.12.0 --filter @cp/web build
+    startCommand: npx --yes pnpm@9.12.0 --filter @cp/web start
     envVars:
+      - key: NODE_VERSION
+        value: 24.13.1
       - key: NODE_ENV
         value: production
 
