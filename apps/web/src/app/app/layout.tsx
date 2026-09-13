@@ -36,11 +36,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     // keeps running while someone is on a different screen.
     <AppProvider>
       <div className="relative min-h-screen">
+        {/*
+          Applied BEFORE first paint.
+          Reading the stored width in an effect would render the expanded
+          gutter, then snap to the collapsed one — a visible jump on every page
+          load for anyone who collapsed the rail. This touches no React state;
+          the rail re-applies the same attribute after mount.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{if(localStorage.getItem('securtxn.nav.collapsed')==='1')" +
+              "document.documentElement.dataset.nav='collapsed'}catch(e){}",
+          }}
+        />
         <div aria-hidden className="ground pointer-events-none fixed inset-0 -z-10" />
 
         <Nav />
 
-        <main className="lg:pl-64">
+        {/* Reads the variable the rail stamps on the document element. */}
+        <main className="lg:pl-(--nav-gutter)">
           <div className="mx-auto w-full max-w-[1400px] px-4 pt-16 pb-16 sm:px-6 lg:pt-8">
             {children}
           </div>

@@ -10,7 +10,7 @@
 // This changes no request. It only says whether the last one worked.
 
 import { useEffect, useState } from "react";
-import { Button } from "../../ui/Button";
+import { IconButton, RefreshIcon } from "../../ui/Button";
 
 export function PollIndicator({
   at,
@@ -48,9 +48,7 @@ export function PollIndicator({
             ? "checking…"
             : `checked ${ago}s ago`}
       </span>
-      <Button size="sm" variant="quiet" onClick={onCheck}>
-        check now
-      </Button>
+      <IconButton icon={<RefreshIcon />} label="Check now" onClick={onCheck} />
     </div>
   );
 }

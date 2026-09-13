@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useApp } from "./AppProvider";
 import { api } from "../../lib/flow";
 import { Panel } from "../ui/Surface";
-import { Button } from "../ui/Button";
+import { IconButton, RefreshIcon } from "../ui/Button";
 import { Alert } from "../ui/Alert";
 import { StatusPill } from "../ui/StatusPill";
 
@@ -73,9 +73,7 @@ export function BalanceCard({ address }: { address: string }) {
     <Panel className="p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="font-mono text-micro tracking-wide text-mist-500 uppercase">Balances</h2>
-        <Button size="sm" variant="quiet" onClick={() => void load()} busy={busy}>
-          Refresh
-        </Button>
+        <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} busy={busy} />
       </div>
 
       {error && (

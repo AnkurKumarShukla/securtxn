@@ -111,11 +111,6 @@ export function EscrowCard({ escrow, flow }: { escrow: Escrow; flow: PayeeFlow }
             </ol>
           )}
 
-          <p className="mt-3 text-[11.5px] leading-relaxed text-mist-500">
-            Claiming reveals the secret on chain from your own key. That reveal is the receipt —
-            nobody can produce it for you, and if you never claim, the money returns to the sender
-            after the timelock.
-          </p>
         </>
       ) : (
         <p className="mt-3 text-[11.5px] leading-relaxed text-mist-500">

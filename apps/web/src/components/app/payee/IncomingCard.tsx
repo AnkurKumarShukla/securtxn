@@ -115,10 +115,6 @@ export function IncomingCard({
         )}
       </div>
 
-      <p className="mt-3 text-[11.5px] leading-relaxed text-mist-500">
-        Accepting signs with your payout key over this amount and invoice. Denying needs no
-        signature and stops the payment dead — nothing about you is checked.
-      </p>
     </div>
   );
 }

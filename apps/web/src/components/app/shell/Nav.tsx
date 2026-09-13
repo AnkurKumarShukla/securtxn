@@ -31,7 +31,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useApp } from "../AppProvider";
 import type { Role } from "../../../lib/account";
 
@@ -56,33 +56,91 @@ type Group = { label: string; items: Item[] };
  */
 const PAYEE_ROUTES = ["/app/inbox", "/app/escrow"];
 
+const COLLAPSE_KEY = "securtxn.nav.collapsed";
+
 export function Nav() {
   const { role, setRole, payee, org } = useApp();
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
-  // A deep link decides the VIEW, not the stored preference. Arriving at the
-  // escrow screen with the paying navigation showing is a state nobody chose,
-  // and the first thing it does is hide the link back to where you are.
-  //
-  // Nothing about identity changes here. Both views are the same account, the
-  // same wallet and the same verification; this only decides which set of
-  // screens is listed.
+  /**
+   * Collapsed to icons, remembered.
+   *
+   * Read in an effect rather than during render: a value present in
+   * localStorage and absent on the server is a hydration mismatch, and React
+   * throws the tree away rather than reconciling it. The cost is one frame at
+   * the expanded width on load, which is why the width transition is disabled
+   * until the stored value has been applied.
+   */
+  const [collapsed, setCollapsed] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    const wantsPayee = PAYEE_ROUTES.some((r) => pathname.startsWith(r));
-    if (wantsPayee && role !== "payee") setRole("payee");
-    // The account screen belongs to both views, so landing on it leaves the
-    // current one alone rather than snapping back to paying.
-    const shared = pathname.startsWith("/app/account");
-    if (!wantsPayee && !shared && pathname.startsWith("/app") && role !== "payer") setRole("payer");
-  }, [pathname, role, setRole]);
+    try {
+      setCollapsed(window.localStorage.getItem(COLLAPSE_KEY) === "1");
+    } catch {
+      /* private mode — the default is fine */
+    }
+    setHydrated(true);
+  }, []);
+
+  // The content gutter is CSS, driven by this attribute, because the layout
+  // that owns the gutter renders on the server and cannot read browser state.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (collapsed) root.dataset.nav = "collapsed";
+    else delete root.dataset.nav;
+  }, [collapsed]);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+      } catch {
+        /* nothing to do */
+      }
+      return next;
+    });
+  }, []);
+
+  /**
+   * Which view the CURRENT route belongs to.
+   *
+   * DERIVED, NOT STORED, and that is what removes the flicker rather than
+   * merely reducing it. Computing this during render means the list and the
+   * page change in the same frame; setting state from an effect meant the route
+   * landed, the old list painted once, and the correct one arrived a render
+   * later — a flash on every switch even after the double-flip was fixed.
+   *
+   * A deep link therefore decides the view outright. Arriving at the escrow
+   * screen with the paying navigation showing is a state nobody chose, and the
+   * first thing it does is hide the link back to where you are.
+   *
+   * Nothing about identity changes here. Both views are the same account, the
+   * same wallet and the same verification; this only decides which set of
+   * screens is listed.
+   */
+  const view: Role = useMemo(() => {
+    if (PAYEE_ROUTES.some((r) => pathname.startsWith(r))) return "payee";
+    // The account screen belongs to both, so it keeps whichever view you
+    // arrived in rather than snapping back to paying.
+    if (pathname.startsWith("/app/account")) return role;
+    if (pathname.startsWith("/app")) return "payer";
+    return role;
+  }, [pathname, role]);
+
+  // Persisted AFTER the fact, so the preference survives a reload without
+  // being in the path that decides what is on screen.
+  useEffect(() => {
+    if (view !== role) setRole(view);
+  }, [view, role, setRole]);
 
   // Split by what you are DOING versus what you are looking up. Payments and
   // approvals are today's queue; payees and anchors are reference material you
   // go to on purpose.
   const groups: Group[] =
-    role === "payer"
+    view === "payer"
       ? [
           {
             label: "Work",
@@ -141,62 +199,103 @@ export function Nav() {
           type="button"
           aria-label="Close navigation"
           onClick={() => setOpen(false)}
-          className="fixed inset-0 z-40 bg-ink-950/70 backdrop-blur-sm lg:hidden"
+          // A plain scrim. The blur was defocusing a page nobody is reading —
+          // the drawer covers most of it — for the price of a compositor
+          // layer over the whole viewport on the devices least able to
+          // afford one.
+          className="fixed inset-0 z-40 bg-ink-950/80 lg:hidden"
         />
       )}
 
+      {/* AN OBJECT ON THE PAGE, not a wall at the edge of it.
+          SHADOW SCALES WITH HEIGHT ABOVE THE SURFACE, NOT WITH SIZE. The docked
+          rail barely floats, so it takes the control-level shadow: a 4px offset
+          and a 10px blur. It had the dialog-level one — 16px and 44px — which is
+          right for something sitting over a scrim and, stretched down a whole
+          viewport, produced a dark halo the width of a thumb down the side of
+          the page. A big object needs a TIGHTER shadow than a small one at the
+          same elevation, not a bigger one.
+
+          Below `lg` it is an overlay drawer genuinely floating over the page,
+          so there it keeps the deep one.
+          Inset on all four sides with its own radius and its own shadow, so the
+          ground is visible around it and it reads as something placed on the
+          surface rather than a region the surface stops at. That is the whole
+          difference between chrome and a component, and it is what lets the
+          same extrusion language apply to the rail as to every card. */}
       <nav
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-ink-900 shadow-(--shadow-neu-4) transition-transform duration-[--dur-base] ease-[--ease-out-quint] lg:translate-x-0 lg:shadow-none ${
-          open ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed z-50 flex flex-col overflow-hidden rounded-2xl bg-ink-900 shadow-(--shadow-neu-4) lg:shadow-(--shadow-neu-2) inset-y-3 left-3 ${
+          hydrated ? "transition-[transform,width] duration-[--dur-base] ease-[--ease-out-quint]" : ""
+        } ${collapsed ? "w-[76px]" : "w-64"} ${open ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"} lg:translate-x-0`}
       >
         {/* A single soft fall of light down the rail's first stretch, agreeing
-            with the global top-left source. Without it a 100vh slab of one flat
+            with the global top-left source. Without it a tall slab of one flat
             colour reads as a hole in the page rather than a surface. */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-linear-to-b from-white/2.5 to-transparent"
         />
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-px bg-hairline-strong" />
 
-        <div className="relative flex h-14 shrink-0 items-center gap-2 hairline-b px-4">
+        <div
+          className={`relative flex h-14 shrink-0 items-center gap-2 hairline-b ${
+            collapsed ? "justify-center px-0" : "px-4"
+          }`}
+        >
           <Link
             href="/"
-            className="flex items-center gap-2 text-[14px] font-semibold tracking-tight text-mist-50"
+            title="SecurTxn"
+            className="flex items-center gap-2 text-sm font-semibold tracking-tight text-mist-50"
           >
             {/* Accent-filled, so it is one of the few things permitted to glow. */}
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-xs bg-linear-to-b from-signal-400 to-signal-600 text-ink-950 shadow-(--glow-signal)">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-xs bg-signal-400 text-ink-950 shadow-(--glow-signal)">
               <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M8 2 3 4v4c0 3 2 5 5 6 3-1 5-3 5-6V4L8 2Z" />
                 <path d="M6 8.2 7.4 9.6 10.2 6.6" />
               </svg>
             </span>
-            SecurTxn
+            {!collapsed && "SecurTxn"}
           </Link>
         </div>
 
         {/* Which company you are acting as. Named rather than a generic
             "Sender", so the payments below are visibly someone's. */}
-        <div className="relative hairline-b px-3 py-3">
+        <div className={`relative hairline-b py-3 ${collapsed ? "px-2" : "px-3"}`}>
           <RoleSwitch
-            role={role}
+            collapsed={collapsed}
+            role={view}
             onChange={(next) => {
-              setRole(next);
+              // NAVIGATE ONLY. Setting the role here as well is what made the
+              // switch flicker: the role changed immediately, the effect below
+              // then fired while `pathname` was STILL the old route, decided
+              // the role disagreed with it and set it back — and the route
+              // finally landed and flipped it a third time. Two visible flips
+              // per click, from three renders fighting over one value.
+              //
+              // The URL is the source of truth, so let it be the only thing
+              // that moves. The effect derives the view once the route settles.
               router.push(next === "payee" ? "/app/inbox" : "/app");
               setOpen(false);
             }}
           />
-          <p className="mt-2 truncate px-1 text-[11px] text-mist-500">
-            {org.displayName ?? "Account not set up yet"}
-          </p>
+          {!collapsed && (
+            <p className="mt-2 truncate px-1 text-2xs text-mist-500">
+              {org.displayName ?? "Account not set up yet"}
+            </p>
+          )}
         </div>
 
         <div className="relative flex-1 space-y-5 overflow-y-auto p-3">
           {groups.map((group) => (
             <div key={group.label}>
-              <p className="mb-1.5 px-3 font-mono text-micro tracking-micro text-mist-600 uppercase">
-                {group.label}
-              </p>
+              {collapsed ? (
+                // A heading with no room for its word still has a job: it keeps
+                // the two halves of the list from reading as one.
+                <div aria-hidden className="mx-2 mb-2 h-px bg-hairline" />
+              ) : (
+                <p className="mb-1.5 px-3 font-mono text-micro tracking-micro text-mist-600 uppercase">
+                  {group.label}
+                </p>
+              )}
               <ul className="space-y-1">
                 {group.items.map((item) => {
                   // Exact match for the index route, prefix match for the rest,
@@ -213,7 +312,10 @@ export function Nav() {
                         // only on the item under the pointer — box-shadow is not
                         // compositor-accelerated, so animating a whole list of
                         // them drops frames.
-                        className={`group/nav relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-[box-shadow,background-color,color] duration-[--dur-press] ease-[--ease-standard] ${
+                        title={collapsed ? item.label : undefined}
+                        className={`group/nav relative flex items-center rounded-md py-2 text-sm transition-[box-shadow,background-color,color] duration-[--dur-press] ease-[--ease-standard] ${
+                          collapsed ? "justify-center px-0" : "gap-2.5 px-3"
+                        } ${
                           active
                             ? "neu-2 bg-ink-800 text-signal-300"
                             : "text-mist-400 hover:neu-1 hover:bg-ink-850 hover:text-mist-100 active:neu-in-1"
@@ -231,10 +333,17 @@ export function Nav() {
                         <span className={active ? "text-signal-400" : "text-mist-500"}>
                           {item.icon}
                         </span>
-                        <span className="flex-1">{item.label}</span>
+                        {!collapsed && <span className="flex-1">{item.label}</span>}
                         {item.badge !== undefined && item.badge > 0 && (
-                          <span className="neu-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-ink-850 px-1.5 font-mono text-micro text-pending-400 tabular-nums">
-                            {item.badge}
+                          <span
+                            className={
+                              collapsed
+                                ? // No room beside the glyph, so it sits on it.
+                                  "absolute top-1 right-1 h-2 w-2 rounded-full bg-pending-400"
+                                : "neu-1 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-ink-850 px-1.5 font-mono text-micro text-pending-400 tabular-nums"
+                            }
+                          >
+                            {collapsed ? "" : item.badge}
                           </span>
                         )}
                       </Link>
@@ -249,16 +358,46 @@ export function Nav() {
         {/* Raised out of the rail rather than ruled off from it. What goes wrong
             in this product is the network and the API, so that is what earns the
             one pinned card — see the shell plan for wiring reachability in. */}
-        <div className="relative shrink-0 p-3">
-          <div className="neu-2 rounded-md bg-ink-850 px-3 py-2.5">
+        <div className={`relative shrink-0 space-y-2 ${collapsed ? "p-2" : "p-3"}`}>
+          <div
+            className={`neu-2 rounded-md bg-ink-850 ${collapsed ? "flex justify-center py-2.5" : "px-3 py-2.5"}`}
+            title={collapsed ? "Hedera testnet" : undefined}
+          >
             <span className="flex items-center gap-2 font-mono text-micro tracking-micro text-mist-500 uppercase">
               <span
                 aria-hidden
                 className="h-1.5 w-1.5 rounded-full bg-pending-400 shadow-(--glow-pending)"
               />
-              Hedera testnet
+              {!collapsed && "Hedera testnet"}
             </span>
           </div>
+
+          {/* Desktop only. Below `lg` the rail is a drawer that is already
+              either open or gone, and a control that narrows something you
+              dismiss by tapping beside it is one state too many. */}
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-expanded={!collapsed}
+            title={collapsed ? "Expand" : "Collapse"}
+            className={`neu-2 hidden h-8 w-full items-center justify-center rounded-md bg-ink-850 text-mist-500 transition-[box-shadow,color] duration-[--dur-press] ease-[--ease-standard] hover:text-mist-200 active:neu-in-1 lg:flex`}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              className={`h-3.5 w-3.5 transition-transform duration-[--dur-base] ease-[--ease-standard] ${
+                collapsed ? "rotate-180" : ""
+              }`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M10 3.5 5.5 8l4.5 4.5" />
+            </svg>
+          </button>
         </div>
       </nav>
     </>
@@ -272,7 +411,34 @@ export function Nav() {
  * different logins. One browser holds both so a single machine can demonstrate
  * the whole flow, which is the only reason this switch exists.
  */
-function RoleSwitch({ role, onChange }: { role: Role; onChange: (r: Role) => void }) {
+function RoleSwitch({
+  role,
+  onChange,
+  collapsed = false,
+}: {
+  role: Role;
+  onChange: (r: Role) => void;
+  collapsed?: boolean;
+}) {
+  // Collapsed, there is no room for a two-up track — so it becomes one button
+  // showing the side you are NOT on, which is the only thing pressing it can
+  // do. A two-state control with one visible state has to say what the press
+  // achieves, not what is currently true.
+  if (collapsed) {
+    const next: Role = role === "payer" ? "payee" : "payer";
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(next)}
+        title={next === "payee" ? "Switch to getting paid" : "Switch to paying"}
+        aria-label={next === "payee" ? "Switch to getting paid" : "Switch to paying"}
+        className="neu-2 flex h-9 w-full items-center justify-center rounded-md bg-ink-850 font-mono text-micro tracking-micro text-mist-400 uppercase transition-[box-shadow,color] duration-[--dur-press] ease-[--ease-standard] hover:text-mist-100 active:neu-in-1"
+      >
+        {role === "payer" ? "PAY" : "GET"}
+      </button>
+    );
+  }
+
   return (
     // A recessed track holding one raised, accent-filled thumb. The track is a
     // container, so it sinks; the chosen side is live, so it rises out of it.
@@ -287,7 +453,7 @@ function RoleSwitch({ role, onChange }: { role: Role; onChange: (r: Role) => voi
             role === value
               // One declaration, not `neu-1` plus a glow class: both set
               // box-shadow, so the second would simply replace the first.
-              ? "bg-linear-to-b from-signal-400 to-signal-600 text-ink-950 shadow-[var(--shadow-neu-1),var(--glow-signal)]"
+              ? "bg-signal-400 text-ink-950 shadow-[var(--shadow-neu-1),var(--glow-signal)]"
               : "text-mist-400 hover:bg-ink-850 hover:text-mist-100"
           }`}
         >

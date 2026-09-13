@@ -5,15 +5,15 @@
  *
  * THE MATERIAL IS MATTE BLACK WITH SOFT EXTRUSION. Surfaces are shades of
  * charcoal that rise out of and sink into a single base plane, lit from one
- * fixed direction, with a small set of saturated accents that never become
+ * fixed direction, with a small set of muted accents that never become
  * surfaces themselves. It is a control layer in front of other people's money,
  * so it has to read as calm and deliberate — the extrusion does the work that
  * decoration would otherwise be asked to do.
  *
- * ONE ACCENT, ON PURPOSE. Colour means something here. Cyan is the only thing
- * you can act on; green means verified, amber means a person is the blocker,
- * coral means blocked, violet means the machine is working, and pink marks the
- * one step you are on during onboarding. If any of them were decorative they
+ * ONE ACCENT, ON PURPOSE. Colour means something here. Soft sky is the only
+ * thing you can act on; mint means verified, sand means a person is the
+ * blocker, rose means blocked, lavender means the machine is working, and pink
+ * marks the one step you are on during onboarding. If any of them were decorative they
  * would all stop meaning anything. `components/ui/status.ts` owns the mapping
  * and no other file may name a status colour.
  *
@@ -60,20 +60,29 @@
   --color-mist-600: #464c58; /*  1.9:1 — disabled, placeholder, idle */
 
   /* ----------------------------------------------------------------- accents
-   * The only interactive colour. Cyan rather than the old cornflower blue: on a
-   * matte charcoal ground a cooler, more saturated accent is what separates
-   * "premium" from "flat", and it is the one hue that still reads as a link.
+   * The only interactive colour.
+   *
+   * PASTEL, NOT NEON, and the reason is the material. A fully saturated accent
+   * on matte charcoal reads as two substances in one object — something lit
+   * from inside sitting on something with no shine at all. Dropping the
+   * saturation and lifting the lightness puts the colour ON the surface
+   * instead of glowing out of it.
+   *
+   * The hues did not move. These carry meaning, so they stay as far apart from
+   * each other as they were: "hard to tell mint from sand" would be a
+   * correctness problem, not a matter of taste. Every one still clears 7:1
+   * against ink-800.
    */
-  --color-signal-300: #7fe6ff; /* accent text on matte */
-  --color-signal-400: #3dd8ff; /* primary action, focus, active nav */
-  --color-signal-500: #1fc2ee; /* primary fill, chart accent */
-  --color-signal-600: #0e9dc4; /* pressed */
+  --color-signal-300: #bfe3f0; /* accent text on matte */
+  --color-signal-400: #93cfe3; /* primary action, focus, active nav */
+  --color-signal-500: #74b7cf; /* primary fill, chart accent */
+  --color-signal-600: #5593ab; /* pressed */
 
   /* Reserved for verified state. Never decorative. */
-  --color-verified-400: #3be8a0;
+  --color-verified-400: #9dd8bb;
 
   /* Reserved for the blocked/refused state. */
-  --color-halt-400: #ff6b6b;
+  --color-halt-400: #e5a3a3;
 
   /*
    * Reserved for "waiting on a human".
@@ -84,11 +93,11 @@
    * the one state an operator can actually act on, so it gets its own colour
    * and nothing else may use it.
    */
-  --color-pending-400: #ffc24b;
-  --color-pending-500: #d99b1f;
+  --color-pending-400: #e6cd9c;
+  --color-pending-500: #c2a877;
 
   /* The machine is working. Distinct from waiting, for the reason above. */
-  --color-running-400: #8b7bff;
+  --color-running-400: #b3aae0;
 
   /*
    * The single active step during onboarding, and nothing else.
@@ -97,7 +106,7 @@
    * act on. Spending a whole hue on one dot is what makes "you are here"
    * unmissable without an arrow or an animation pointing at it.
    */
-  --color-stage-400: #ff6fa5;
+  --color-stage-400: #dba8d8;
 
   /*
    * Elevation by role rather than by number, so a panel cannot drift to a
@@ -174,7 +183,10 @@
 
   /* ------------------------------------------------------------------ radius
    * Softer than a flat UI would need. A 4px corner under a 20px shadow spread
-   * reads as a sticker rather than an object.
+   * reads as a sticker rather than an object. The other end is worse: a radius
+   * large enough to be noticed stops describing the object and starts being the
+   * object, and every control turns into the same lozenge. These are set so the
+   * curve is felt rather than seen.
    *
    * Two rules keep this from drifting. Radius never exceeds the container's own
    * padding. And nesting is concentric: inner = outer − padding, rounded DOWN
@@ -183,12 +195,12 @@
    * Nothing in the product is a full-radius rectangle. That is landing-page
    * language and it makes a 40px control read as a chip.
    */
-  --radius-xs: 8px;
-  --radius-sm: 12px;
-  --radius-md: 14px; /* workhorse: buttons, inputs, nav links, toast */
-  --radius-lg: 20px; /* panel and card */
-  --radius-xl: 28px; /* dialog, palette, popover */
-  --radius-2xl: 36px; /* the app frame, one hero container per screen */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 9px; /* workhorse: buttons, inputs, nav links, toast */
+  --radius-lg: 13px; /* panel and card */
+  --radius-xl: 18px; /* dialog, palette, popover */
+  --radius-2xl: 22px; /* the app frame, one hero container per screen */
 
   /* ------------------------------------------------------------------ motion
    * One easing per intent. The rule is: enter slow-to-a-stop, leave fast. Using
@@ -255,11 +267,11 @@
    * the one highlighted chart mark, and the focus ring. Nothing else.
    */
   --glow-signal:
-    0 0 20px -2px rgb(31 194 238 / 0.45), 0 0 48px -8px rgb(31 194 238 / 0.25);
-  --glow-verified: 0 0 20px -2px rgb(59 232 160 / 0.4);
-  --glow-halt: 0 0 20px -2px rgb(255 107 107 / 0.4);
-  --glow-pending: 0 0 20px -2px rgb(255 194 75 / 0.35);
-  --glow-stage: 0 0 24px -2px rgb(255 111 165 / 0.5);
+    0 0 16px -4px rgb(147 207 227 / 0.3), 0 0 36px -10px rgb(147 207 227 / 0.16);
+  --glow-verified: 0 0 16px -4px rgb(157 216 187 / 0.26);
+  --glow-halt: 0 0 16px -4px rgb(229 163 163 / 0.26);
+  --glow-pending: 0 0 16px -4px rgb(230 205 156 / 0.22);
+  --glow-stage: 0 0 18px -4px rgb(219 168 216 / 0.32);
 
   /*
    * Hairlines. Extrusion cannot separate a table row from the next one — there
@@ -285,6 +297,21 @@
    * the DOM order that the old hand-rolled z-50 relied on stops being a
    * reliable predictor the moment a dropdown exists.
    */
+  /*
+   * How much room the rail takes.
+   *
+   * A VARIABLE BECAUSE THE LAYOUT CANNOT ASK. `app/app/layout.tsx` is a server
+   * component, so it has no way to read a collapse state that lives in the
+   * browser. The rail stamps `data-nav` on the document element instead, and
+   * the content gutter follows it in CSS — which also means the two can never
+   * be out of step by a render.
+   *
+   * The extra room is the rail's own inset: it floats, so the gutter is its
+   * width plus the gap on both sides of it.
+   */
+  --nav-w: 16rem;
+  --nav-gutter: calc(var(--nav-w) + 1.5rem);
+
   --z-backdrop: -10;
   --z-base: 0;
   --z-raised: 10; /* sticky table header */
@@ -310,6 +337,10 @@
  * marketing page and the product is the continuity worth keeping; two different
  * blues either side of the sign-in button is not.
  */
+[data-nav="collapsed"] {
+  --nav-w: 76px;
+}
+
 [data-surface="deep"] {
   --color-ink-950: #050609;
   --color-ink-900: #080a0f;

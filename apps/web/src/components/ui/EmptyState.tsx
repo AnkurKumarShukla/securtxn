@@ -7,11 +7,11 @@
 // what has to happen first" is the answer to the question the person is
 // actually asking. So the body text is kept verbatim from the original copy.
 //
-// A RECESS, NOT A DASHED BOX. The dashed border is the web's convention for
-// "something is missing here", and it survives because on a flat surface there
-// is no other way to say it. This material has one: the absence sinks into the
-// panel instead of being outlined on it. Dashed edges have no light source and
-// read as a wireframe left in by accident.
+// NO BOX AT ALL. This went from a dashed outline to a recessed well, and the
+// well was still one shape too many: an empty state already sits inside a
+// panel, so drawing a second surface inside the first puts a hole in a card to
+// say there is nothing in the card. Two nested boxes is not more emphasis, it
+// is more furniture. The words are the content; the panel is the container.
 
 import type { ReactNode } from "react";
 
@@ -28,7 +28,7 @@ export function EmptyState({
 }) {
   return (
     <div
-      className={`well flex flex-col items-center px-6 py-8 text-center ${className}`}
+      className={`flex flex-col items-center px-6 py-10 text-center ${className}`}
     >
       {icon && <div className="mb-3 text-mist-600">{icon}</div>}
       <p className="text-[13px] font-medium text-mist-300">{title}</p>

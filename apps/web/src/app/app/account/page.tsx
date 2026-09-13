@@ -29,6 +29,7 @@ import { PageHeader } from "../../../components/app/shell/Page";
 import { ActivityLog } from "../../../components/app/payee/ActivityLog";
 import { WalletCard } from "../../../components/app/WalletCard";
 import { BalanceCard } from "../../../components/app/BalanceCard";
+import { PersonhoodCard } from "../../../components/app/PersonhoodCard";
 import { STAGES } from "../../../hooks/usePayeeFlow";
 import { Alert } from "../../../components/ui/Alert";
 import { Button } from "../../../components/ui/Button";
@@ -162,6 +163,10 @@ export default function IdentityPage() {
                   return (
                     <li
                       key={stage.id}
+                      // The sentence that used to sit under every row. Worth one
+                      // hover, not a permanent grey line per step — seven of
+                      // them turned a checklist into a wall of prose.
+                      title={stage.proves}
                       className={`flex items-start gap-3 rounded-md border px-3 py-2 ${
                         state === "idle"
                           ? "border-hairline bg-white/[0.01]"
@@ -178,13 +183,18 @@ export default function IdentityPage() {
                             {stage.title}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-[11.5px] leading-relaxed text-mist-500">
-                          {stage.proves}
-                        </p>
                         {record?.detail && (
+                          // GREY, NOT ACCENT. These are the artefacts a step
+                          // produced — an id, a tier, a transaction hash. They
+                          // are worth being able to read and copy, and they are
+                          // not worth the one colour that means "act on this":
+                          // seven accent-coloured lines down a finished
+                          // checklist is seven things asking for attention that
+                          // is already spent. A failure keeps its colour,
+                          // because that one IS asking.
                           <p
                             className={`mt-1 font-mono text-[11px] break-all ${
-                              state === "failed" ? "text-halt-400" : "text-signal-300"
+                              state === "failed" ? "text-halt-400" : "text-mist-400"
                             }`}
                           >
                             {record.detail}
@@ -235,6 +245,7 @@ export default function IdentityPage() {
         <aside className="space-y-4">
           {/* Only once there is an address to ask about. */}
           {address && <BalanceCard address={address} />}
+          {session.vendorId && <PersonhoodCard enrolmentId={session.enrolmentId} />}
 
           <Panel className="p-4">
             <h2 className="mb-3 font-mono text-[10.5px] tracking-[0.16em] text-mist-500 uppercase">

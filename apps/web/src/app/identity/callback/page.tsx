@@ -59,7 +59,7 @@ export default async function IdentityCallbackPage({
               <div className="mt-5 flex flex-wrap gap-2">
                 <Link
                   href="/app"
-                  className="inline-flex h-9 items-center rounded-md bg-linear-to-b from-signal-400 to-signal-600 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.40)_inset] transition-[filter] hover:brightness-[1.06]"
+                  className="inline-flex h-9 items-center rounded-md bg-signal-400 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset] transition-colors hover:bg-signal-300"
                 >
                   Back to the dashboard
                 </Link>

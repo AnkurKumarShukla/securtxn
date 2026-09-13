@@ -29,18 +29,19 @@ const SIZES: Record<Size, string> = {
 };
 
 const VARIANTS: Record<Variant, string> = {
-  // Matched to PrimaryButton in the landing primitives: top-to-bottom gradient
-  // so the surface has a direction, a bright inset line along the top edge, and
-  // a shadow tinted with the accent rather than black — an accent glow reads as
-  // the button lighting the surface, a grey one reads as a sticker.
+  // FLAT FILL, NOT A GRADIENT. The gradient came from the landing page, where a
+  // lit pill on a WebGL backdrop is the point. Here it fights the material:
+  // this surface is matte and lit from one fixed direction, and a fill with its
+  // own internal light source is a second lamp in the room. The extrusion does
+  // the shaping now — a rim along the top edge and a soft accent shadow under
+  // it, both of which agree with the global light.
   primary:
-    "bg-linear-to-b from-signal-400 to-signal-600 text-ink-950 " +
-    "shadow-[0_1px_0_0_rgba(255,255,255,0.40)_inset,0_8px_20px_-10px_rgba(91,140,255,0.8)] " +
-    "hover:not-disabled:-translate-y-px hover:not-disabled:brightness-[1.06]",
-  // The landing page's secondary is the same smoked glass as the nav; a plain
-  // outline next to a lit pill looks unfinished rather than deliberately quiet.
+    "bg-signal-400 text-ink-950 " +
+    "shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset,var(--shadow-accent)] " +
+    "hover:not-disabled:bg-signal-300",
+  // Quiet but present. Also flat, for the same reason.
   ghost:
-    "hairline-strong bg-white/[0.045] bg-linear-to-b from-white/[0.06] to-transparent text-mist-200 " +
+    "hairline-strong bg-white/[0.045] text-mist-200 " +
     "hover:not-disabled:border-hairline-active hover:not-disabled:bg-white/[0.07] hover:not-disabled:text-mist-50",
   quiet:
     "hairline text-mist-500 hover:not-disabled:border-hairline-active hover:not-disabled:text-mist-200",
@@ -101,5 +102,59 @@ export function RunButton({
         <path d="M5 3.5v9l7-4.5-7-4.5Z" />
       </svg>
     </button>
+  );
+}
+
+/**
+ * Refresh, as an icon.
+ *
+ * Every list on this product had a word-shaped "Refresh" sitting next to its
+ * real action, and two buttons of equal weight is a way of saying they matter
+ * equally. They do not: one raises a payment, the other re-reads a list that
+ * already re-reads itself. Shrinking it to a glyph puts it back in proportion
+ * without removing it.
+ *
+ * The label still exists for anyone who cannot see the glyph — it is the
+ * accessible name AND the tooltip, so the affordance is not lost, only the
+ * visual weight.
+ */
+export function IconButton({
+  icon,
+  label,
+  busy = false,
+  className = "",
+  ...rest
+}: {
+  icon: ReactNode;
+  label: string;
+  busy?: boolean;
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      {...rest}
+      disabled={rest.disabled || busy}
+      className={
+        "neu-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-ink-800 " +
+        "text-mist-400 transition-[box-shadow,color] duration-[--dur-press] ease-[--ease-standard] " +
+        "hover:not-disabled:text-mist-100 active:not-disabled:neu-in-1 " +
+        "disabled:cursor-not-allowed disabled:opacity-45 " +
+        className
+      }
+    >
+      <span className={busy ? "motion-safe:animate-spin" : undefined}>{icon}</span>
+    </button>
+  );
+}
+
+/** The circular arrow every list uses. One definition, so they cannot drift. */
+export function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+      <path d="M13.5 2.2V5h-2.8" />
+    </svg>
   );
 }

@@ -22,7 +22,7 @@ import { PageHeader } from "../../../components/app/shell/Page";
 import { Relative } from "../../../components/app/shell/Relative";
 import { decisionTone } from "../../../components/app/payments/status";
 import { Alert } from "../../../components/ui/Alert";
-import { Button } from "../../../components/ui/Button";
+import { IconButton, RefreshIcon } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { Field } from "../../../components/ui/Field";
 import { Hash } from "../../../components/ui/Mono";
@@ -57,9 +57,7 @@ export default function ApprovalsPage() {
         title="Approvals"
         lead="Payments that passed every automated check and are waiting on a person."
         actions={
-          <Button variant="quiet" onClick={() => void load()}>
-            Refresh
-          </Button>
+          <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} />
         }
       />
 
@@ -69,11 +67,11 @@ export default function ApprovalsPage() {
         </Alert>
       )}
 
-      <Alert tone="info" className="mb-4" title="Approving here does not send money">
+      {/* <Alert tone="info" className="mb-4" title="Approving here does not send money">
         It records a human decision against a proposal. The transfer is signed on the approver&apos;s
         own machine with a hardware key this application never holds, which is what stops a
         compromised browser from moving funds.
-      </Alert>
+      </Alert> */}
 
       {rows === null ? (
         <div className="space-y-3">

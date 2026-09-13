@@ -16,7 +16,7 @@ import { useApp } from "../../../components/app/AppProvider";
 import { PageHeader } from "../../../components/app/shell/Page";
 import { statusMeta } from "../../../components/app/payments/status";
 import { Alert } from "../../../components/ui/Alert";
-import { Button } from "../../../components/ui/Button";
+import { IconButton, RefreshIcon } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { Panel } from "../../../components/ui/Surface";
 import { StatusPill } from "../../../components/ui/StatusPill";
@@ -91,12 +91,10 @@ export default function PaymentsPage() {
         lead="Every payout this organisation has raised, and whose move it is now."
         actions={
           <>
-            <Button variant="quiet" onClick={() => void load()}>
-              Refresh
-            </Button>
+            <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} />
             <Link
               href="/app/payments/new"
-              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-linear-to-b from-signal-400 to-signal-600 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.40)_inset] transition-[filter] hover:brightness-[1.06]"
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-signal-400 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset] transition-colors hover:bg-signal-300"
             >
               New payment
             </Link>

@@ -20,7 +20,7 @@ import { useApp } from "../../../components/app/AppProvider";
 import { PageHeader } from "../../../components/app/shell/Page";
 import { Relative } from "../../../components/app/shell/Relative";
 import { Alert } from "../../../components/ui/Alert";
-import { Button } from "../../../components/ui/Button";
+import { IconButton, RefreshIcon } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { Hash } from "../../../components/ui/Mono";
 import { Panel } from "../../../components/ui/Surface";
@@ -75,9 +75,7 @@ export default function PayeesPage() {
         title="Payees"
         lead="Who you can pay, and how far each of them got through their own checks."
         actions={
-          <Button variant="quiet" onClick={() => void load()}>
-            Refresh
-          </Button>
+          <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} />
         }
       />
 

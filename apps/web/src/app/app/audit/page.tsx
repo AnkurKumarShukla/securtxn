@@ -18,7 +18,7 @@ import { useApp } from "../../../components/app/AppProvider";
 import { PageHeader } from "../../../components/app/shell/Page";
 import { Relative } from "../../../components/app/shell/Relative";
 import { Alert } from "../../../components/ui/Alert";
-import { Button } from "../../../components/ui/Button";
+import { Button, IconButton, RefreshIcon } from "../../../components/ui/Button";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { Field } from "../../../components/ui/Field";
 import { Hash } from "../../../components/ui/Mono";
@@ -30,6 +30,7 @@ export default function AuditPage() {
   const [rows, setRows] = useState<AnchorRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -46,6 +47,37 @@ export default function AuditPage() {
   useEffect(() => {
     if (ready) void load();
   }, [ready, load]);
+
+  /**
+   * Reads an anchor back from a mirror node and checks the root matches.
+   *
+   * Offered per row because the flag is about OUR read-back, not about the
+   * anchor: a mirror that has not caught up yet leaves a perfectly good anchor
+   * marked unverified, and until now there was no way to ask again.
+   */
+  const verify = useCallback(
+    async (id: string) => {
+      setVerifying(id);
+      setError(null);
+      setNote(null);
+      try {
+        const t = await token();
+        const call = await api(`/evidence/anchors/${id}/verify`, {
+          method: "POST",
+          token: t,
+          body: {},
+        });
+        if (!call.ok) throw new Error(messageOf(call.body));
+        setNote("Read back from a mirror node — the published root matches ours.");
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setVerifying(null);
+      }
+    },
+    [token, load],
+  );
 
   /** Publishes a Merkle root over everything written since the last anchor. */
   const anchor = useCallback(async () => {
@@ -77,9 +109,7 @@ export default function AuditPage() {
         lead="Every step of every payment is hash-linked, and the roots are published where nobody can rewrite them."
         actions={
           <>
-            <Button variant="quiet" onClick={() => void load()}>
-              Refresh
-            </Button>
+            <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} />
             <Button variant="primary" onClick={() => void anchor()} busy={busy}>
               Publish an anchor
             </Button>
@@ -139,6 +169,18 @@ export default function AuditPage() {
                   </p>
                 </div>
 
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {!row.verified && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void verify(row.id)}
+                    busy={verifying === row.id}
+                    disabled={verifying !== null && verifying !== row.id}
+                  >
+                    Verify
+                  </Button>
+                )}
                 {row.messageUrl && (
                   <a
                     href={row.messageUrl}
@@ -152,6 +194,7 @@ export default function AuditPage() {
                     </svg>
                   </a>
                 )}
+                </div>
               </div>
 
               <div className="mt-3 grid gap-x-6 sm:grid-cols-2">

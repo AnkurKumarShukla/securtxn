@@ -31,7 +31,7 @@ import { Relative } from "../../../../components/app/shell/Relative";
 import { deriveStages } from "../../../../components/app/payments/timeline";
 import { statusMeta } from "../../../../components/app/payments/status";
 import { Alert } from "../../../../components/ui/Alert";
-import { Button } from "../../../../components/ui/Button";
+import { Button, IconButton, RefreshIcon } from "../../../../components/ui/Button";
 import { Field } from "../../../../components/ui/Field";
 import { Code, Hash } from "../../../../components/ui/Mono";
 import { JsonDrawer } from "../../../../components/ui/JsonDrawer";
@@ -241,9 +241,7 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
         }
         back={{ href: "/app/payments", label: "Payments" }}
         actions={
-          <Button variant="quiet" onClick={() => void load()}>
-            Refresh
-          </Button>
+          <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} />
         }
       />
 
@@ -307,7 +305,14 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
             <h2 className="mb-4 text-[13.5px] font-semibold text-mist-50">Timeline</h2>
             <ol className="relative">
               {stages.map((stage, i) => (
-                <li key={stage.id} className="relative flex gap-3 pb-4 last:pb-0">
+                <li
+                  key={stage.id}
+                  // Kept on hover rather than deleted: the sentence is why the
+                  // step exists, and a timeline of twelve of them printed in
+                  // full was prose, not a timeline.
+                  title={stage.proves}
+                  className="relative flex gap-3 pb-4 last:pb-0"
+                >
                   {/* The connector. Stops at the last item so the column does
                       not trail off into nothing. */}
                   {i < stages.length - 1 && (
@@ -330,13 +335,27 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
                         {stage.title}
                       </span>
                     </div>
-                    <p className="mt-0.5 text-[11.5px] leading-relaxed text-mist-500">
-                      {stage.proves}
-                    </p>
                     {stage.detail && (
+                      // GREY FOR ARTEFACTS, ACCENT FOR A VERDICT.
+                      //
+                      // Most of these are what a step produced — an amount, a
+                      // transaction hash, a decision code. Worth reading and
+                      // copying, not worth the one colour that means "look
+                      // here": ten accent lines down a finished timeline is ten
+                      // things competing for attention that is already spent.
+                      //
+                      // Evidence keeps it, because it is the only line that is
+                      // a CLAIM rather than a record. "27 records, chain valid"
+                      // is the answer to "can any of the above be trusted", and
+                      // it is the one thing on this screen worth looking at
+                      // twice. A failure keeps its colour for the same reason.
                       <p
                         className={`mt-1 font-mono text-[11px] break-all ${
-                          stage.tone === "failed" ? "text-halt-400" : "text-signal-300"
+                          stage.tone === "failed"
+                            ? "text-halt-400"
+                            : stage.id === "evidence"
+                              ? "text-signal-300"
+                              : "text-mist-400"
                         }`}
                       >
                         {stage.detail}
@@ -444,10 +463,10 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
               {settlement.refundTxHash && (
                 <Field k="Refund tx" v={settlement.refundTxHash} mono copy />
               )}
-              <p className="mt-3 text-[11px] leading-relaxed text-mist-500">
+              {/* <p className="mt-3 text-[11px] leading-relaxed text-mist-500">
                 Unclaimed, this returns to you automatically after the timelock. That is the point
                 of escrow here — recovery does not need the counterparty to cooperate.
-              </p>
+              </p> */}
             </Panel>
           )}
 
@@ -455,10 +474,10 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
             <h2 className="mb-2 font-mono text-[10.5px] tracking-[0.16em] text-mist-500 uppercase">
               Commitment
             </h2>
-            <p className="mb-2 text-[11px] leading-relaxed text-mist-500">
+            {/* <p className="mb-2 text-[11px] leading-relaxed text-mist-500">
               A hash over what you stated when you raised this. It is what makes the claim
               non-repudiable without storing the claim itself.
-            </p>
+            </p> */}
             <Hash value={payment.senderContextCommitment} chars={10} />
           </Panel>
         </aside>

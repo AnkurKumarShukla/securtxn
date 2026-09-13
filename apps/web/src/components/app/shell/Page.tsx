@@ -63,6 +63,7 @@ export function Stat({
   sub,
   tone = "default",
   href,
+  icon,
 }: {
   label: string;
   value: ReactNode;
@@ -70,6 +71,15 @@ export function Stat({
   tone?: "default" | "ok" | "warn" | "halt" | undefined;
   /** Makes the whole tile a link, for "3 awaiting approval". */
   href?: string | undefined;
+  /**
+   * A glyph in a raised tile, top-right.
+   *
+   * Not decoration. Four numbers in four identical boxes are told apart only by
+   * reading their labels, and the labels are the smallest text on the card — a
+   * distinct silhouette per tile is what lets someone find the one they came
+   * for without reading anything at all.
+   */
+  icon?: ReactNode | undefined;
 }) {
   const colour =
     tone === "ok"
@@ -82,13 +92,21 @@ export function Stat({
 
   const body = (
     <>
-      <span className="font-mono text-[10.5px] tracking-[0.14em] text-mist-500 uppercase">
+      {icon && (
+        <span
+          aria-hidden
+          className="neu-2 mb-5 inline-flex h-11 w-11 items-center justify-center rounded-md bg-ink-850 text-mist-400"
+        >
+          {icon}
+        </span>
+      )}
+      <span className="block font-mono text-micro tracking-micro text-mist-500 uppercase">
         {label}
       </span>
-      <span className={`mt-2 block text-[26px] leading-none font-semibold tabular-nums ${colour}`}>
+      <span className={`mt-2 block text-[34px] leading-none font-semibold tabular-nums ${colour}`}>
         {value}
       </span>
-      {sub && <span className="mt-1.5 block text-[11.5px] text-mist-500">{sub}</span>}
+      {sub && <span className="mt-1.5 block text-2xs text-mist-500">{sub}</span>}
     </>
   );
 
@@ -99,11 +117,11 @@ export function Stat({
         // A raised card that is also a link catches more light on hover rather
         // than gaining an outline. The panel has no border to brighten now, and
         // adding one back on hover would make the edge appear and disappear.
-        className="panel block p-4 transition-colors duration-[--dur-press] hover:bg-ink-700"
+        className="panel block p-5 transition-colors duration-[--dur-press] hover:bg-ink-700"
       >
         {body}
       </Link>
     );
   }
-  return <div className="panel p-4">{body}</div>;
+  return <div className="panel p-5">{body}</div>;
 }

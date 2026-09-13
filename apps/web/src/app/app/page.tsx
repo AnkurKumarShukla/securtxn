@@ -19,7 +19,7 @@ import { PageHeader, Stat } from "../../components/app/shell/Page";
 import { Relative } from "../../components/app/shell/Relative";
 import { statusMeta } from "../../components/app/payments/status";
 import { Alert } from "../../components/ui/Alert";
-import { Button } from "../../components/ui/Button";
+import { IconButton, RefreshIcon } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Panel } from "../../components/ui/Surface";
 import { StatusPill } from "../../components/ui/StatusPill";
@@ -66,18 +66,25 @@ export default function OverviewPage() {
           title="Welcome to SecurTxn"
           lead="A control layer in front of stablecoin payouts. Before you can raise one, the platform has to know who is paying."
         />
-        <Panel className="p-6" spotlight>
-          <h2 className="text-[16px] font-semibold text-mist-50">Set up your organisation</h2>
-          <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-mist-400">
-            Three things, once: a record for your company, a DigiLocker consent that establishes
-            who you legally are, and a World ID enrolment so every later payment can confirm the
-            same human raised it. It takes a few minutes and you never do it again.
+        {/* TWO DIFFERENT FIRST STEPS, and asking for the wrong one is how people
+            get stuck. Without a wallet there is nothing to set an organisation
+            UP for: the address is what the record is about, what signs, what
+            funds an escrow and what a refund returns to. Only once it exists
+            does "set up your organisation" mean anything. */}
+        <Panel className="p-6">
+          <h2 className="text-lg font-semibold text-mist-50">
+            {org.address ? "Set up your organisation" : "Connect your wallet"}
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-mist-400">
+            {org.address
+              ? "Three things, once: a record for your company, a DigiLocker consent that establishes who you legally are, and a World ID enrolment so every later payment can confirm the same human raised it. It takes a few minutes and you never do it again."
+              : "Your wallet is your account here. It funds the payments you send, receives the ones you are paid, and makes every signature in between — so it comes before anything else."}
           </p>
           <Link
             href="/app/account"
-            className="mt-5 inline-flex h-9 items-center rounded-md bg-linear-to-b from-signal-400 to-signal-600 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.40)_inset] transition-[filter] hover:brightness-[1.06]"
+            className="mt-5 inline-flex h-9 items-center rounded-md bg-signal-400 px-4 text-sm font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset] transition-colors hover:bg-signal-300"
           >
-            Start setup
+            {org.address ? "Start setup" : "Connect wallet"}
           </Link>
         </Panel>
       </>
@@ -108,12 +115,10 @@ export default function OverviewPage() {
         lead="What has been raised, and what is waiting on somebody."
         actions={
           <>
-            <Button variant="quiet" onClick={() => void load()}>
-              Refresh
-            </Button>
+            <IconButton icon={<RefreshIcon />} label="Refresh" onClick={() => void load()} />
             <Link
               href="/app/payments/new"
-              className="inline-flex h-9 items-center rounded-md bg-linear-to-b from-signal-400 to-signal-600 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.40)_inset] transition-[filter] hover:brightness-[1.06]"
+              className="inline-flex h-9 items-center rounded-md bg-signal-400 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.28)_inset] transition-colors hover:bg-signal-300"
             >
               New payment
             </Link>
@@ -127,32 +132,32 @@ export default function OverviewPage() {
         </Alert>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
+          icon={<IconWaiting />}
           label="Awaiting payee"
           value={awaitingPayee}
-          sub="they accept from their own browser"
           tone={awaitingPayee > 0 ? "warn" : "default"}
           href="/app/payments"
         />
         <Stat
+          icon={<IconCheck />}
           label="Ready to check"
           value={needsCheck}
-          sub="the payee accepted — run the match"
           tone={needsCheck > 0 ? "warn" : "default"}
           href="/app/payments"
         />
         <Stat
+          icon={<IconApproval />}
           label="Awaiting approval"
           value={pendingApprovals}
-          sub="a human stands before the money"
           tone={pendingApprovals > 0 ? "warn" : "default"}
           href="/app/approvals"
         />
         <Stat
+          icon={<IconBlocked />}
           label="Blocked"
           value={blocked}
-          sub="refused, and the reason is recorded"
           tone={blocked > 0 ? "halt" : "default"}
           href="/app/payments"
         />
@@ -252,5 +257,53 @@ export default function OverviewPage() {
         </div>
       </div>
     </>
+  );
+}
+
+/* Four silhouettes, drawn at one stroke weight so the row reads as a set.
+   Distinct SHAPES rather than four variations on a circle: the point is to be
+   recognisable at a glance, which a family of near-identical glyphs is not. */
+const s = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.5,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+};
+const C = "h-[18px] w-[18px]";
+
+/** An hourglass: time passing, and nothing you can do about it. */
+function IconWaiting() {
+  return (
+    <svg viewBox="0 0 20 20" className={C} aria-hidden {...s}>
+      <path d="M6 3h8M6 17h8M6.5 3c0 3 3.5 4.2 3.5 7s-3.5 4-3.5 7M13.5 3c0 3-3.5 4.2-3.5 7s3.5 4 3.5 7" />
+    </svg>
+  );
+}
+/** A magnifier: something to be looked at. */
+function IconCheck() {
+  return (
+    <svg viewBox="0 0 20 20" className={C} aria-hidden {...s}>
+      <circle cx="9" cy="9" r="5.2" />
+      <path d="M12.8 12.8 17 17" />
+    </svg>
+  );
+}
+/** A person: the human standing between the verdict and the money. */
+function IconApproval() {
+  return (
+    <svg viewBox="0 0 20 20" className={C} aria-hidden {...s}>
+      <circle cx="10" cy="7" r="2.8" />
+      <path d="M4.5 16.5c1-2.8 3.1-4.2 5.5-4.2s4.5 1.4 5.5 4.2" />
+    </svg>
+  );
+}
+/** A struck-through circle: refused, and it stops here. */
+function IconBlocked() {
+  return (
+    <svg viewBox="0 0 20 20" className={C} aria-hidden {...s}>
+      <circle cx="10" cy="10" r="6.4" />
+      <path d="M5.6 5.6l8.8 8.8" />
+    </svg>
   );
 }
