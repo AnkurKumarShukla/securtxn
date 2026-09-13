@@ -115,7 +115,7 @@ export function WorldIdStep({ title, purpose, signal, subject, onVerified }: Pro
 
     // A fresh agent token per check: this component has no access to the run's
     // token, and minting one is a single call in a dev environment.
-    const tokenCall = await api("/dev/token", {
+    const tokenCall = await api("/api/token", {
       method: "POST",
       body: { role: "agent", subject: "flow-console" },
     });

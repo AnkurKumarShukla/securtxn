@@ -223,11 +223,11 @@ async function digilocker(
 export const RUNNERS: Record<StepId, Runner> = {
   async token(ctx) {
     const call = must(
-      await api("/dev/token", {
+      await api("/api/token", {
         method: "POST",
         body: { role: "agent", subject: "flow-console" },
       }),
-      "dev/token",
+      "api/token",
     );
     ctx.token = (call.body as { token: string }).token;
     return { response: { role: "agent", token: `${ctx.token.slice(0, 24)}…` } };
@@ -425,7 +425,7 @@ export const RUNNERS: Record<StepId, Runner> = {
 
   async settle(ctx) {
     const approver = must(
-      await api("/dev/token", { method: "POST", body: { role: "approver", subject: "flow-console" } }),
+      await api("/api/token", { method: "POST", body: { role: "approver", subject: "flow-console" } }),
       "approver token",
     ).body as { token: string };
 

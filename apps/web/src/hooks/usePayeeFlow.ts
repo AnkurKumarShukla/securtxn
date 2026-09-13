@@ -209,7 +209,7 @@ export function usePayeeFlow(
   // down and recreates the five-second interval on every render.
   const token = useCallback(async (): Promise<string> => {
     if (tokenRef.current) return tokenRef.current;
-    const res = await api("/dev/token", {
+    const res = await api("/api/token", {
       method: "POST",
       body: { role: "agent", subject: "payee-page" },
     });

@@ -92,7 +92,7 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
         if (opts.approver) {
           // Settling is approver-scoped: an agent token cannot move money, and
           // that separation is the control, not a formality.
-          const mint = await api("/dev/token", {
+          const mint = await api("/api/token", {
             method: "POST",
             body: { role: "approver", subject: "securtxn-web" },
           });

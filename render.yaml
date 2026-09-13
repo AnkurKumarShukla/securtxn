@@ -256,6 +256,19 @@ services:
       - key: WORLD_RP_SIGNING_KEY
         sync: false
 
+      # Signs the console's own API tokens (src/app/api/token/route.ts).
+      #
+      # The API's /dev/token is absent in production by design, so the console
+      # mints its own here instead — server-side, where the secrets never reach
+      # the client bundle, and only for the agent and approver roles.
+      #
+      # MUST be byte-identical to the API service's values. A mismatch is a 401
+      # on every call with no indication that two secrets simply differ.
+      - key: JWT_AGENT_SECRET
+        sync: false
+      - key: JWT_APPROVER_SECRET
+        sync: false
+
 # ---------------------------------------------------------------------------
 # KEEP-ALIVE
 #
