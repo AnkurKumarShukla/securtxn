@@ -175,7 +175,7 @@ await prisma.$disconnect();
 
 console.log(
   failures === 0
-    ? "\nall ${CASES.length} verdicts correct, produced by the deployed workflow"
+    ? `\nall ${CASES.length} verdicts correct, produced by the deployed workflow`
     : `\n${failures}/${CASES.length} cases wrong`,
 );
 process.exit(failures === 0 ? 0 : 1);
