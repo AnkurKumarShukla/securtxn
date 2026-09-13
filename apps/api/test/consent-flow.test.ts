@@ -14,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig, type Config } from "../src/config/index.js";
+import { payeeSignal } from "../src/modules/consent/service.js";
 import { buildServer } from "../src/server.js";
 import {
   IDENTITY_BINDING_TYPES,
@@ -27,7 +28,12 @@ import {
 import { acceptPayment, denyPayment } from "./fixtures/consent.js";
 import { fixtureOracle } from "./fixtures/oracle.js";
 import { createPayer } from "./fixtures/payer.js";
-import { clearWorldIdRows, enrolSubject, passWorldIdCheck } from "./fixtures/worldid.js";
+import {
+  clearWorldIdRows,
+  enrolSubject,
+  passPayeeCheck,
+  passSenderCheck,
+} from "./fixtures/worldid.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 const REAL_FIXTURES = join(REPO_ROOT, "fixtures", "digilocker");
@@ -229,7 +235,7 @@ async function draftPayment(vendorId: string, walletId: string, amount = "1250.5
   // P2 — the sender's own Selfie Check, bound to this payment. It happens
   // immediately after P1 in the real flow, so it happens here too; the tests
   // that are about the sender gate itself skip this helper.
-  await passWorldIdCheck(prisma, payerId, paymentId);
+  await passSenderCheck(prisma, payerId, paymentId);
   return paymentId;
 }
 
@@ -321,7 +327,7 @@ describe.skipIf(!hasRealFixtures)("payee consent (P3-P4)", () => {
     expect(await prisma.notification.count({ where: { paymentRequestId: paymentId } })).toBe(0);
 
     // And once the sender does verify for THIS payment, it goes through.
-    await passWorldIdCheck(prisma, payerId, paymentId);
+    await passSenderCheck(prisma, payerId, paymentId);
     const retried = await app.inject({
       method: "POST",
       url: `/payments/${paymentId}/request-consent`,
@@ -373,7 +379,7 @@ describe.skipIf(!hasRealFixtures)("payee consent (P3-P4)", () => {
   it("accepts a consent signed by the payout address and lets the decision run", async () => {
     const { vendorId, walletId } = await onboardedPayee();
     const paymentId = await draftPayment(vendorId, walletId);
-    const worldIdVerificationId = await passWorldIdCheck(prisma, vendorId, paymentId);
+    const worldIdVerificationId = await passPayeeCheck(prisma, vendorId, paymentId);
 
     const { accepted } = await acceptPayment(app, paymentId, PAYEE, auth, {
       worldIdVerificationId,
@@ -392,7 +398,7 @@ describe.skipIf(!hasRealFixtures)("payee consent (P3-P4)", () => {
   it("records the acceptance in the evidence chain", async () => {
     const { vendorId, walletId } = await onboardedPayee();
     const paymentId = await draftPayment(vendorId, walletId);
-    const worldIdVerificationId = await passWorldIdCheck(prisma, vendorId, paymentId);
+    const worldIdVerificationId = await passPayeeCheck(prisma, vendorId, paymentId);
     await acceptPayment(app, paymentId, PAYEE, auth, { worldIdVerificationId });
 
     const record = await prisma.evidenceRecord.findFirstOrThrow({
@@ -420,7 +426,7 @@ describe.skipIf(!hasRealFixtures)("payee consent (P3-P4)", () => {
     // correlation World ID's design avoids.
     const { vendorId, walletId } = await onboardedPayee();
     const paymentId = await draftPayment(vendorId, walletId);
-    const worldIdVerificationId = await passWorldIdCheck(prisma, vendorId, paymentId);
+    const worldIdVerificationId = await passPayeeCheck(prisma, vendorId, paymentId);
     await acceptPayment(app, paymentId, PAYEE, auth, { worldIdVerificationId });
 
     const records = await prisma.evidenceRecord.findMany({
@@ -576,7 +582,7 @@ describe.skipIf(!hasRealFixtures)("payee consent (P3-P4)", () => {
   it("refuses a second consent decision on the same payment", async () => {
     const { vendorId, walletId } = await onboardedPayee();
     const paymentId = await draftPayment(vendorId, walletId);
-    const worldIdVerificationId = await passWorldIdCheck(prisma, vendorId, paymentId);
+    const worldIdVerificationId = await passPayeeCheck(prisma, vendorId, paymentId);
     await acceptPayment(app, paymentId, PAYEE, auth, { worldIdVerificationId });
 
     const again = await app.inject({
@@ -648,7 +654,7 @@ describe.skipIf(!hasRealFixtures)("the payee challenge (P5)", () => {
     const { vendorId, walletId } = await onboardedPayee();
     const other = await draftPayment(vendorId, walletId);
     const paymentId = await draftPayment(vendorId, walletId);
-    const foreignCheck = await passWorldIdCheck(prisma, vendorId, other);
+    const foreignCheck = await passPayeeCheck(prisma, vendorId, other);
 
     await app.inject({
       method: "POST",
@@ -675,7 +681,7 @@ describe.skipIf(!hasRealFixtures)("the payee challenge (P5)", () => {
     const paymentId = await draftPayment(vendorId, walletId);
     // Bound to THIS payment, so the signal check passes and the purpose check
     // is the only thing left that can refuse it.
-    const enrolment = await enrolSubject(prisma, vendorId, paymentId);
+    const enrolment = await enrolSubject(prisma, vendorId, payeeSignal(paymentId));
 
     await app.inject({
       method: "POST",
@@ -697,19 +703,18 @@ describe.skipIf(!hasRealFixtures)("the payee challenge (P5)", () => {
     expect(res.json().error.message).toMatch(/enrolment/i);
   });
 
-  it("refuses the sender's own check standing in for the payee's", async () => {
-    // The sender already passed a World ID check for this payment at P2, with
-    // the right signal and the right purpose. Everything about it matches
-    // except WHOSE it is — which is the entire claim the payee's challenge
-    // makes, so the subject check is the only thing that can catch it.
+  it("refuses another party's check standing in for the payee's", async () => {
+    // Everything about this row matches except WHOSE it is: the payee's signal,
+    // the right purpose, a live check — taken by someone else. The subject
+    // check is the only thing that can catch it.
+    //
+    // NOT the sender's own P2 row, which is what this test used to use. Signals
+    // are role-qualified now, so the sender's check carries "sender:<id>" and
+    // is refused one step earlier, by the signal check — which leaves the
+    // subject check with nothing exercising it unless the row is built here.
     const { vendorId, walletId } = await onboardedPayee();
     const paymentId = await draftPayment(vendorId, walletId);
-    const someoneElse = (
-      await prisma.worldIdVerification.findFirstOrThrow({
-        where: { subject: payerId, signal: paymentId, purpose: "REVERIFICATION" },
-        select: { id: true },
-      })
-    ).id;
+    const someoneElse = await passPayeeCheck(prisma, `stranger-${paymentId}`, paymentId);
 
     await app.inject({
       method: "POST",
@@ -816,8 +821,8 @@ describe.skipIf(!hasRealFixtures)("the mismatch alert (P6)", () => {
       },
     });
     const paymentId = wrongClaim.json().id as string;
-    await passWorldIdCheck(prisma, payerId, paymentId);
-    const worldIdVerificationId = await passWorldIdCheck(prisma, vendorId, paymentId);
+    await passSenderCheck(prisma, payerId, paymentId);
+    const worldIdVerificationId = await passPayeeCheck(prisma, vendorId, paymentId);
     await acceptPayment(app, paymentId, PAYEE, auth, { worldIdVerificationId });
 
     await app.inject({

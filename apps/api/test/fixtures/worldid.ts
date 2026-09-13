@@ -16,6 +16,7 @@
 
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { loadConfig } from "../../src/config/index.js";
+import { payeeSignal, senderSignal } from "../../src/modules/consent/service.js";
 
 /**
  * The action the service itself uses, read from config rather than repeated.
@@ -58,22 +59,29 @@ export async function enrolSubject(
 }
 
 /**
- * P2/P5 — a later check bound to one payment.
+ * P2/P5 — a later check bound to one payment AND to one side of it.
  *
- * `signal` is the payment id, which is what makes the check non-transferable:
- * the consent path rejects a verification whose signal names a different
- * payment.
+ * The signal is role-qualified ("sender:<id>" / "payee:<id>"), not the bare
+ * payment id. Two reasons, and the second is why this helper takes the role
+ * rather than letting each caller spell the string:
+ *
+ *  - the uniqueness index is (nullifier, action, signal), so one human paying
+ *    themselves — which is exactly the demo — would collide with their own
+ *    sender check when acting as payee;
+ *  - the qualifiers are the service's, imported from it, so a change there
+ *    breaks these tests loudly instead of leaving them asserting a signal the
+ *    real code stopped producing.
  */
-export async function passWorldIdCheck(
+async function passCheck(
   prisma: PrismaClient,
   subject: string,
-  paymentId: string,
+  signal: string,
 ): Promise<string> {
   const row = await prisma.worldIdVerification.create({
     data: {
       nullifier: new Prisma.Decimal(nullifierFor(subject)),
       action: ACTION,
-      signal: paymentId,
+      signal,
       credential: "selfie",
       environment: "staging",
       subject,
@@ -82,6 +90,24 @@ export async function passWorldIdCheck(
     select: { id: true },
   });
   return row.id;
+}
+
+/** P2 — the sender's unconditional check for this payment. */
+export async function passSenderCheck(
+  prisma: PrismaClient,
+  subject: string,
+  paymentId: string,
+): Promise<string> {
+  return passCheck(prisma, subject, senderSignal(paymentId));
+}
+
+/** P5 — the payee's check, demanded only when the risk engine asks for one. */
+export async function passPayeeCheck(
+  prisma: PrismaClient,
+  subject: string,
+  paymentId: string,
+): Promise<string> {
+  return passCheck(prisma, subject, payeeSignal(paymentId));
 }
 
 /** Removes every row this helper created for the given subjects. */

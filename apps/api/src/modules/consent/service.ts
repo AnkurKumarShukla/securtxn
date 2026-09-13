@@ -384,7 +384,8 @@ export class ConsentService {
    * Presence is not enough — storing an unvalidated id would look verified and
    * prove nothing. Each check below closes a different substitution:
    *
-   *   signal  === paymentId       a check taken for another payment is not reusable
+   *   signal  === payee:<id>      a check taken for another payment — or by the
+   *                               sender for this one — is not reusable
    *   purpose === REVERIFICATION  an enrolment must not double as an acceptance
    *   subject === the payee       someone else's live check is not this payee's
    *

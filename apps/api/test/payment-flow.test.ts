@@ -14,7 +14,7 @@ import {
   domainFor,
 } from "../src/lib/eip712.js";
 import { consentToPayment } from "./fixtures/consent.js";
-import { clearWorldIdRows, passWorldIdCheck } from "./fixtures/worldid.js";
+import { clearWorldIdRows, passSenderCheck } from "./fixtures/worldid.js";
 import { fixtureOracle } from "./fixtures/oracle.js";
 import { createPayer } from "./fixtures/payer.js";
 
@@ -288,7 +288,7 @@ describe.skipIf(!hasRealFixtures)("payment decision end to end", () => {
     // be: consent has to be signed by the confirmed payout address, and this
     // address has not proved anything yet. That is the stronger refusal —
     // the payment never even reaches the identity check.
-    await passWorldIdCheck(prisma, payerId, payment.id);
+    await passSenderCheck(prisma, payerId, payment.id);
     const consent = await app.inject({
       method: "POST",
       url: `/payments/${payment.id}/request-consent`,

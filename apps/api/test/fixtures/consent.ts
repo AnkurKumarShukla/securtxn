@@ -14,7 +14,7 @@ import {
   domainFor,
   PAYEE_CONSENT_TYPES,
 } from "../../src/lib/eip712.js";
-import { enrolSubject, passWorldIdCheck } from "./worldid.js";
+import { enrolSubject, passPayeeCheck, passSenderCheck } from "./worldid.js";
 
 export type ConsentOptions = {
   /** Overrides the signer, to test that a foreign key is refused. */
@@ -130,7 +130,7 @@ export async function consentToPayment(
     select: { payerVendorId: true },
   });
   if (payment.payerVendorId) {
-    await passWorldIdCheck(prisma, payment.payerVendorId, paymentId);
+    await passSenderCheck(prisma, payment.payerVendorId, paymentId);
   }
 
   const enrolled = await prisma.worldIdVerification.findFirst({
@@ -139,7 +139,7 @@ export async function consentToPayment(
   });
   if (!enrolled) await enrolSubject(prisma, payeeVendorId);
 
-  const worldIdVerificationId = await passWorldIdCheck(prisma, payeeVendorId, paymentId);
+  const worldIdVerificationId = await passPayeeCheck(prisma, payeeVendorId, paymentId);
   const { accepted } = await acceptPayment(app, paymentId, payee, auth, {
     worldIdVerificationId,
   });
