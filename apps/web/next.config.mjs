@@ -27,7 +27,21 @@ const API_PREFIXES = [
   "swagger",
 ];
 
-const API_ORIGIN = process.env.API_ORIGIN ?? "http://127.0.0.1:3000";
+// Render's `fromService … property: host` yields a BARE HOSTNAME — no scheme —
+// and `next build` rejects a rewrite destination that does not start with "/",
+// "http://" or "https://". It fails the whole build with "Invalid rewrites
+// found", listing every route, which reads as a config bug in this file rather
+// than a missing four characters in an environment variable.
+//
+// So normalise here instead of asking every deployment to remember the prefix.
+// A bare host in production is https; anything explicit is left alone.
+function normaliseOrigin(value) {
+  if (!value) return "http://127.0.0.1:3000";
+  if (/^https?:\/\//.test(value)) return value;
+  return `https://${value}`;
+}
+
+const API_ORIGIN = normaliseOrigin(process.env.API_ORIGIN);
 
 /**
  * Hosts allowed to reach the dev server from another origin.
