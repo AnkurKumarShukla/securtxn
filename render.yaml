@@ -62,11 +62,14 @@ services:
 
       # The one URL to change if this service is renamed. Everything public —
       # the DigiLocker consent redirect today — is derived from it.
+      #
+      # WRITTEN OUT, NOT `fromService`. That yields the bare service NAME
+      # ("securtxn-api"), which resolves only on Render's private network — and
+      # free instances are not on it. As a base URL it is worse than an error:
+      # the DigiLocker redirect becomes https://securtxn-api/identity/callback,
+      # which fails in the user's browser, at consent, minutes later.
       - key: PUBLIC_BASE_URL
-        fromService:
-          type: web
-          name: securtxn-api
-          property: host
+        value: https://securtxn-api.onrender.com
 
       # --- set in the dashboard; never in git -------------------------------
       - key: DATABASE_URL # MUST be the Supabase SESSION POOLER. The direct host
@@ -199,11 +202,11 @@ services:
 
       # The Next rewrites proxy the API's path prefixes here, which is what lets
       # the browser call /payments and /vendors same-origin.
+      # Written out for the same reason as PUBLIC_BASE_URL above: `fromService`
+      # gives "securtxn-api", and the proxy then fails with ENOTFOUND on every
+      # API call while the pages themselves render fine.
       - key: API_ORIGIN
-        fromService:
-          type: web
-          name: securtxn-api
-          property: host
+        value: https://securtxn-api.onrender.com
 
       # Empty on purpose: same-origin. The page then works on whatever host it
       # was loaded from, rather than a URL baked in at build time.

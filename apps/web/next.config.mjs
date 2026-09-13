@@ -27,17 +27,22 @@ const API_PREFIXES = [
   "swagger",
 ];
 
-// Render's `fromService … property: host` yields a BARE HOSTNAME — no scheme —
-// and `next build` rejects a rewrite destination that does not start with "/",
-// "http://" or "https://". It fails the whole build with "Invalid rewrites
-// found", listing every route, which reads as a config bug in this file rather
-// than a missing four characters in an environment variable.
+// `next build` rejects a rewrite destination that does not start with "/",
+// "http://" or "https://", and fails the whole build with "Invalid rewrites
+// found" listing every route — which reads as a bug in this file rather than a
+// missing scheme in an environment variable.
 //
-// So normalise here instead of asking every deployment to remember the prefix.
-// A bare host in production is https; anything explicit is left alone.
+// So a qualified bare host is accepted and given one. A bare NAME is not:
+// Render's `fromService … property: host` hands over "securtxn-api", which
+// resolves only on its private network, and prefixing that would move the
+// failure from the build to every API call at runtime (ENOTFOUND), where the
+// pages still render and only the data is missing.
 function normaliseOrigin(value) {
   if (!value) return "http://127.0.0.1:3000";
   if (/^https?:\/\//.test(value)) return value;
+  if (!value.includes(".")) {
+    throw new Error(`API_ORIGIN must be a URL or a qualified host, got "${value}"`);
+  }
   return `https://${value}`;
 }
 
