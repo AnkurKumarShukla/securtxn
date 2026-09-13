@@ -122,7 +122,7 @@ services:
       - key: CRE_GATEWAY_URL
         value: https://01.gateway.zone-a.cre.chain.link
       - key: CRE_WORKFLOW_ID
-        value: 00650bb09fd81dbd1a000b2f492cda9dafca4d414ba90911f89219f87dee4a3b
+        value: 008990a4146240ab8e5bfc4f3f82ec01d7776a0f57cbcfdd0bd75ac1e06205ff
 
       # --- World ID ----------------------------------------------------------
       # Public identifiers. The RP SIGNING KEY is not here on purpose: only the
