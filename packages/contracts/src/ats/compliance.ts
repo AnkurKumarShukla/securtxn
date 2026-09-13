@@ -94,8 +94,15 @@ export type GrantKycInput = {
 };
 
 export type ComplianceResult = {
-  txHash: string;
-  /** False for the mock: nothing was broadcast. */
+  /**
+   * Null when nothing was sent.
+   *
+   * Two cases reach this: the mock gateway, which never broadcasts, and a
+   * wallet the chain had already granted — there is no transaction to point at
+   * because none was needed.
+   */
+  txHash: string | null;
+  /** False for the mock, and for a grant the chain had already applied. */
   broadcast: boolean;
 };
 
@@ -149,6 +156,27 @@ export class AtsComplianceGateway implements ComplianceGateway {
       this.resolver.toEvmAddress(input.securityId),
       this.resolver.toEvmAddress(input.account),
     ]);
+
+    // ALREADY GRANTED IS NOT AN ERROR.
+    //
+    // The chain outlives our database. A wallet keeps its grant through any
+    // amount of local state being cleared — a reset demo database, a reissued
+    // credential, a retried onboarding — and the browser keeps its key in
+    // localStorage, so the same address comes back and asks again. The contract
+    // answers that with a bare custom-error revert (0xfc855b1b), which surfaces
+    // as "Internal server error" and tells nobody that the wallet was already
+    // cleared to hold the asset.
+    //
+    // The grant is a state, not an event: asking for a state the chain is
+    // already in has been satisfied. Reported with broadcast: false so a caller
+    // can still tell "we sent a transaction" from "there was nothing to send".
+    const existing = await this.getKycStatus({
+      securityId: input.securityId,
+      account: input.account,
+    });
+    if (existing === KYC_STATUS.GRANTED) {
+      return { txHash: null, broadcast: false };
+    }
 
     const validFrom = BigInt(Math.floor(input.validFrom.getTime() / 1000));
 

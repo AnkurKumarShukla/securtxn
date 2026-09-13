@@ -415,7 +415,8 @@ export class WalletService {
    * that is complete and correct off-chain.
    */
   async grantOnChainKyc(vendorId: string, walletId: string): Promise<{
-    txHash: string;
+    /** Null when the chain had already granted this wallet — see `broadcast`. */
+    txHash: string | null;
     broadcast: boolean;
     credentialId: string;
     securityId: string;
@@ -468,10 +469,15 @@ export class WalletService {
       validTo: credential.expiresAt,
     });
 
-    await this.deps.prisma.verifiableCredential.update({
-      where: { id: credential.id },
-      data: { grantedTxHash: result.txHash },
-    });
+    // Only when a transaction actually happened. A wallet the chain had already
+    // granted has no hash to record, and writing a placeholder would make the
+    // "already granted" guard above fire on a grant this deployment never made.
+    if (result.txHash) {
+      await this.deps.prisma.verifiableCredential.update({
+        where: { id: credential.id },
+        data: { grantedTxHash: result.txHash },
+      });
+    }
 
     return {
       txHash: result.txHash,

@@ -203,8 +203,12 @@ export const walletRoutes: FastifyPluginAsyncZod = async (app) => {
         params: WalletParams,
         response: {
           200: z.object({
-            txHash: z.string(),
-            /** False when the mock gateway is active — nothing was broadcast. */
+            /** Null when nothing was broadcast — see `broadcast`. */
+            txHash: z.string().nullable(),
+            /**
+             * False when the mock gateway is active, and when the chain had
+             * already granted this wallet so there was nothing to send.
+             */
             broadcast: z.boolean(),
             credentialId: z.string(),
             securityId: z.string(),
