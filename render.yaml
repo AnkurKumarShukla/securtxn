@@ -78,8 +78,6 @@ services:
         sync: false
       - key: SECRET_VENDOR_LOOKUP_API_KEY
         sync: false
-      - key: WORLD_API_KEY
-        sync: false
 
       # --- non-secret configuration ----------------------------------------
       - key: IDENTITY_PROVIDER
