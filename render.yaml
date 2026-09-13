@@ -193,6 +193,12 @@ services:
         value: '{"TIER0_UNVERIFIED":"0","TIER1_LIVENESS":"1000","TIER2_IDENTITY":"50000"}'
       - key: SANDBOX_BASE_URL
         value: https://api.sandbox.co.in
+      # The browser reaches this API same-origin, through the web app's rewrite
+      # proxy, so nothing needs CORS today. Listed anyway because the default is
+      # localhost:3001: the day a page calls this host directly, the failure is
+      # a blocked preflight with no server-side log to find it by.
+      - key: CORS_ORIGINS
+        value: https://securtxn-web.onrender.com
 
   # ---------------------------------------------------------------- WEB -----
   - type: web
