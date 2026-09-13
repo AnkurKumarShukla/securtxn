@@ -122,11 +122,51 @@ export class AnchorService {
       return created;
     });
 
+    // Read it back before answering.
+    //
+    // Anchoring is not finished when we submit it — it is finished when a third
+    // party can read it and the root they read matches ours. Nothing called
+    // `verify` before this, so every anchor sat "unverified" forever and the
+    // flag said nothing about the anchor, only that nobody had asked.
+    //
+    // Bounded and best-effort, deliberately. Mirror nodes lag consensus by a
+    // few seconds, so a single immediate read would nearly always miss; but a
+    // slow mirror must not fail an anchor that IS published, and the caller is
+    // waiting on a button press. A few short attempts covers the normal case,
+    // and the row stays verifiable on demand for everything else.
+    const verified = await this.verifyWithRetry(anchor.id);
+
     return {
       recordsAnchored: pending.length,
-      anchor: toAnchorSummary(anchor),
+      anchor: verified ?? toAnchorSummary(anchor),
       broadcast: this.deps.gateway.broadcasts,
     };
+  }
+
+  /**
+   * Tries the read-back a few times, then gives up quietly.
+   *
+   * Returns null rather than throwing on anything except a ROOT MISMATCH. A
+   * mirror that has not caught up is an ordinary delay; a mirror serving a
+   * different root than we recorded is not, and swallowing that would hide the
+   * single failure this whole mechanism exists to surface.
+   */
+  private async verifyWithRetry(
+    anchorId: string,
+    attempts = 3,
+    delayMs = 2_000,
+  ): Promise<AnchorSummary | null> {
+    for (let i = 0; i < attempts; i += 1) {
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        return await this.verify(anchorId);
+      } catch (error) {
+        // A disagreement about the root is a real finding and must not be
+        // retried away. Everything else is "not there yet".
+        if (error instanceof UnprocessableError) throw error;
+      }
+    }
+    return null;
   }
 
   /**
