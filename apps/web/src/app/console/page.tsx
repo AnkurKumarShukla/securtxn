@@ -463,7 +463,20 @@ function OnChain({ amount, asset, payee }: { amount: string; asset: string; paye
     setError(null);
     const query = new URLSearchParams({ asset: asset || "stUSDC", amount: amount || "0" });
     if (payee) query.set("payee", payee);
-    const res = await api(`/dev/treasury?${query.toString()}`);
+    // This panel stands on its own — it is not part of a run, so it has no
+    // ctx.token to borrow and mints its own.
+    const minted = await api("/api/token", {
+      method: "POST",
+      body: { role: "agent", subject: "flow-console-treasury" },
+    });
+    if (!minted.ok) {
+      setError(messageOf(minted.body));
+      setData(null);
+      return;
+    }
+    const res = await api(`/treasury?${query.toString()}`, {
+      token: (minted.body as { token: string }).token,
+    });
     if (!res.ok) {
       setError(messageOf(res.body));
       setData(null);

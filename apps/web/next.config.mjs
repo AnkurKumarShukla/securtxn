@@ -24,6 +24,7 @@ const API_PREFIXES = [
   "approvals",
   "securities",
   "settlement",
+  "treasury",
   "swagger",
 ];
 

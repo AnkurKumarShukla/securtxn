@@ -48,7 +48,7 @@ export function BalanceCard({ address }: { address: string }) {
     try {
       const t = await token();
       const res = await api(
-        `/dev/treasury?asset=${encodeURIComponent(ASSET)}&payee=${address}`,
+        `/treasury?asset=${encodeURIComponent(ASSET)}&payee=${address}`,
         { token: t },
       );
       if (!res.ok) throw new Error("could not read balances");

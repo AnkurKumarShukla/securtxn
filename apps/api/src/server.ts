@@ -23,6 +23,7 @@ import containerPlugin from "./container.js";
 import { buildLoggerOptions } from "./lib/logger.js";
 import httpsEnforcementPlugin, { tlsServerOptions } from "./lib/tls.js";
 import { devRoutes } from "./modules/dev/routes.js";
+import { treasuryRoutes } from "./modules/treasury/routes.js";
 import { identityRoutes } from "./modules/identity/routes.js";
 import { vendorRoutes } from "./modules/vendors/routes.js";
 import { walletRoutes } from "./modules/wallets/routes.js";
@@ -117,6 +118,7 @@ export async function buildServer(config: Config = loadConfig()): Promise<Fastif
     await app.register(devRoutes);
   }
 
+  await app.register(treasuryRoutes);
   await app.register(vendorRoutes);
   await app.register(walletRoutes);
   await app.register(identityRoutes);
