@@ -357,8 +357,17 @@ const EnvSchema = z
      *
      * Anything derived from it below is only a DEFAULT, so an explicit value
      * still wins where a deployment genuinely needs to differ.
+     *
+     * ACCEPTS A BARE HOSTNAME. Render supplies this with `fromService …
+     * property: host`, which is "securtxn-api.onrender.com" — no scheme — and a
+     * plain .url() rejects it, so the process refuses to boot with "Invalid
+     * url" and no hint that four characters are missing. A bare host is https
+     * here; anything with a scheme is left exactly as given.
      */
-    PUBLIC_BASE_URL: z.string().url().optional(),
+    PUBLIC_BASE_URL: z.preprocess(
+      (v) => (typeof v === "string" && v !== "" && !/^https?:\/\//.test(v) ? `https://${v}` : v),
+      z.string().url().optional(),
+    ),
 
     // --- DigiLocker (§4.7) ---
     SANDBOX_BASE_URL: z.string().url().default("https://api.sandbox.co.in"),
