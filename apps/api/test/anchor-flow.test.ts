@@ -198,16 +198,39 @@ describe("running the anchoring job", () => {
 });
 
 describe("verifying an anchor", () => {
-  it("marks it verified once the message reads back", async () => {
+  it("comes back already verified, because anchoring reads itself back", async () => {
     await paymentWithEvidence(2);
     const anchor = (await post("/evidence/anchor")).json().anchor;
-    expect(anchor.verified).toBe(false);
+
+    // Anchoring is finished when a third party can read it back, not when we
+    // submitted it — so the read-back happens at anchor time and the flag is
+    // true by the time the caller sees the row. It used to be false here, and
+    // stayed false forever, because nothing ever called verify.
+    expect(anchor.verified).toBe(true);
 
     const verified = await post(`/evidence/anchors/${anchor.id}/verify`);
     expect(verified.statusCode).toBe(200);
-    // Anchoring is finished when a third party can read it back, not when we
-    // submitted it.
     expect(verified.json().verified).toBe(true);
+  });
+
+  it("refuses an anchor whose published root disagrees with ours", async () => {
+    // The one failure the mechanism exists to catch, and the one the retry
+    // loop must NOT swallow: a slow mirror is an ordinary delay and is retried,
+    // a mirror serving a different root is a finding and is raised.
+    await paymentWithEvidence(2);
+    const anchor = (await post("/evidence/anchor")).json().anchor;
+
+    // Rewrite our side of the record, leaving the published message alone.
+    // `verified: false` because verify short-circuits on an already-verified
+    // row and would never reach the comparison.
+    await prisma.evidenceAnchor.update({
+      where: { id: anchor.id },
+      data: { verified: false, verifiedAt: null, merkleRoot: "a".repeat(64) },
+    });
+
+    const response = await post(`/evidence/anchors/${anchor.id}/verify`);
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error.message).toMatch(/does not match the recorded root/i);
   });
 
   it("is idempotent", async () => {
