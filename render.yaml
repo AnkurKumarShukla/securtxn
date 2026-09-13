@@ -1,0 +1,165 @@
+# Render blueprint.
+#
+# Three services: the API, the web app, and a cron job that keeps the API awake.
+#
+# WHY THE API STARTS WITH tsx AND NOT `node dist/`. `tsc -p apps/api` compiles
+# apps/api alone; the workspace packages it imports are TypeScript source using
+# NodeNext ".js" specifiers, so the built output resolves
+# packages/shared-types/src/primitives.js — a file that does not exist — and the
+# process exits before it listens. Building those packages properly is the real
+# fix; running the app the way it has always actually run is the honest one
+# until then, and it is why tsx is a runtime dependency.
+#
+# SECRETS ARE NOT IN THIS FILE. Everything marked `sync: false` must be set in
+# the Render dashboard or with `render env set`. Values that differ per
+# deployment (the public URL) are wired with fromService so a rename cannot
+# leave them stale.
+
+services:
+  # ---------------------------------------------------------------- API -----
+  - type: web
+    name: securtxn-api
+    runtime: node
+    plan: starter # NOT free: a free instance sleeps after 15 minutes, and the
+      # CRE DON calling a sleeping lookup endpoint fails the match
+      # rather than waiting for a cold start.
+    region: singapore # Same region as the Supabase project (ap-southeast-1), so
+      # every query does not cross an ocean.
+    branch: main
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @cp/api exec prisma generate
+    startCommand: pnpm --filter @cp/api start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0 # Render routes to the container's external interface;
+          # binding 127.0.0.1 makes the service unreachable.
+      - key: TLS_MODE
+        value: terminated # TLS ends at Render's edge. This enables trustProxy and
+          # the x-forwarded-proto check, so a request that arrived
+          # in the clear is still rejected.
+      - key: ENABLE_DOCS
+        value: "false" # Config refuses to boot in production with docs on.
+
+      # The one URL to change if this service is renamed. Everything public —
+      # the DigiLocker consent redirect today — is derived from it.
+      - key: PUBLIC_BASE_URL
+        fromService:
+          type: web
+          name: securtxn-api
+          property: host
+
+      # --- set in the dashboard; never in git -------------------------------
+      - key: DATABASE_URL # MUST be the Supabase SESSION POOLER. The direct host
+        sync: false #      is IPv6-only and unreachable from Render.
+      - key: HMAC_PEPPER
+        sync: false
+      - key: PII_ENCRYPTION_KEY
+        sync: false
+      - key: JWT_AGENT_SECRET
+        sync: false
+      - key: JWT_APPROVER_SECRET
+        sync: false
+      - key: JWT_BRIDGE_SECRET
+        sync: false
+      - key: JWT_ISSUER_SECRET
+        sync: false
+      - key: SANDBOX_LIVE_KEY
+        sync: false
+      - key: SANDBOX_LIVE_SECRET
+        sync: false
+      - key: ATS_ISSUER_PRIVATE_KEY
+        sync: false
+      - key: HEDERA_OPERATOR_KEY
+        sync: false
+      - key: SECRET_VENDOR_LOOKUP_API_KEY
+        sync: false
+      - key: WORLD_API_KEY
+        sync: false
+
+      # --- non-secret configuration ----------------------------------------
+      - key: IDENTITY_PROVIDER
+        value: digilocker
+      - key: VENDOR_MATCHER
+        value: cre
+      - key: COMPLIANCE_GATEWAY
+        value: ats
+      - key: CHAIN_GATEWAY
+        value: hedera
+      - key: ANCHOR_GATEWAY
+        value: hcs
+      - key: WORLD_FEATURE_FLAG_ENABLED
+        value: "true"
+      - key: EIP712_CHAIN_ID
+        value: "296"
+      - key: HEDERA_CHAIN_ID
+        value: "296"
+
+  # ---------------------------------------------------------------- WEB -----
+  - type: web
+    name: securtxn-web
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @cp/web build
+    startCommand: pnpm --filter @cp/web start
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # The Next rewrites proxy the API's path prefixes here, which is what lets
+      # the browser call /payments and /vendors same-origin.
+      - key: API_ORIGIN
+        fromService:
+          type: web
+          name: securtxn-api
+          property: host
+
+      # Empty on purpose: same-origin. The page then works on whatever host it
+      # was loaded from, rather than a URL baked in at build time.
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: ""
+
+      - key: NEXT_PUBLIC_EIP712_CHAIN_ID
+        value: "296"
+      - key: NEXT_PUBLIC_HEDERA_CHAIN_ID
+        value: "296"
+      - key: NEXT_PUBLIC_HEDERA_JSON_RPC_URL
+        value: https://testnet.hashio.io/api
+
+      # World ID. The app id and rp id are public identifiers; the signing key
+      # is not, and is the only secret this service needs.
+      - key: NEXT_PUBLIC_WORLD_APP_ID
+        sync: false
+      - key: NEXT_PUBLIC_WORLD_RP_ID
+        sync: false
+      - key: NEXT_PUBLIC_WORLD_ACTION
+        sync: false
+      - key: NEXT_PUBLIC_WORLD_ENVIRONMENT
+        value: sandbox
+      - key: NEXT_PUBLIC_WORLD_PRESET
+        value: selfieCheckLegacy
+      - key: WORLD_RP_SIGNING_KEY
+        sync: false
+
+  # --------------------------------------------------------------- CRON -----
+  - type: cron
+    name: securtxn-keepalive
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    schedule: "*/10 * * * *"
+    buildCommand: "true" # Nothing to build; the job is one request.
+    # Hits the endpoint that exists for exactly this and touches nothing else —
+    # no database, no chain. A keep-alive that depended on Postgres would take
+    # the service down with it.
+    startCommand: curl -fsS "$API_URL/health/keep-alive" && echo " keep-alive ok"
+    envVars:
+      - key: API_URL
+        fromService:
+          type: web
+          name: securtxn-api
+          property: host
