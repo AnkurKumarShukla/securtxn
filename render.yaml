@@ -1,6 +1,7 @@
 # Render blueprint.
 #
-# Three services: the API, the web app, and a cron job that keeps the API awake.
+# Two services: the API and the web app. The keep-alive pinger is external —
+# Render's cron jobs are paid-only — and is described at the bottom of this file.
 #
 # WHY THE API STARTS WITH tsx AND NOT `node dist/`. `tsc -p apps/api` compiles
 # apps/api alone; the workspace packages it imports are TypeScript source using
@@ -20,9 +21,11 @@ services:
   - type: web
     name: securtxn-api
     runtime: node
-    plan: starter # NOT free: a free instance sleeps after 15 minutes, and the
-      # CRE DON calling a sleeping lookup endpoint fails the match
-      # rather than waiting for a cold start.
+    plan: free # A free instance sleeps after 15 minutes idle and takes ~50s to
+      # wake. That matters here because the CRE DON calls the vendor
+      # lookup unattended: a sleeping endpoint fails the match rather
+      # than waiting. An external pinger every 10 minutes keeps it
+      # awake — see KEEP-ALIVE at the bottom of this file.
     region: singapore # Same region as the Supabase project (ap-southeast-1), so
       # every query does not cross an ocean.
     branch: main
@@ -100,7 +103,7 @@ services:
   - type: web
     name: securtxn-web
     runtime: node
-    plan: starter
+    plan: free
     region: singapore
     branch: main
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @cp/web build
@@ -144,22 +147,21 @@ services:
       - key: WORLD_RP_SIGNING_KEY
         sync: false
 
-  # --------------------------------------------------------------- CRON -----
-  - type: cron
-    name: securtxn-keepalive
-    runtime: node
-    plan: starter
-    region: singapore
-    branch: main
-    schedule: "*/10 * * * *"
-    buildCommand: "true" # Nothing to build; the job is one request.
-    # Hits the endpoint that exists for exactly this and touches nothing else —
-    # no database, no chain. A keep-alive that depended on Postgres would take
-    # the service down with it.
-    startCommand: curl -fsS "$API_URL/health/keep-alive" && echo " keep-alive ok"
-    envVars:
-      - key: API_URL
-        fromService:
-          type: web
-          name: securtxn-api
-          property: host
+# ---------------------------------------------------------------------------
+# KEEP-ALIVE
+#
+# Render's cron jobs are a paid feature, so the pinger lives outside this file.
+# Point any free scheduler — cron-job.org, UptimeRobot, GitHub Actions — at:
+#
+#     https://securtxn-api.onrender.com/health/keep-alive     every 10 minutes
+#
+# Ten minutes, not fifteen: the idle timeout is fifteen, and a schedule that
+# only just beats it leaves no margin for a missed run.
+#
+# Point it at /health/keep-alive rather than /health. Liveness is what the
+# PLATFORM probes to decide whether to restart the process; conflating the two
+# means a pinger outage looks like a liveness failure.
+#
+# Free instance hours are shared across all free services (750/month). Two
+# services kept awake is roughly 48 hours a day, so a multi-day demo fits, and a
+# permanently-on deployment does not.
