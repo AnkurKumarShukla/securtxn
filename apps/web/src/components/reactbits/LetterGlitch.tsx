@@ -1,12 +1,18 @@
 // Vendored from React Bits (reactbits.dev), LetterGlitch / TS-TW variant.
 //
-// Kept close to upstream. Two changes, both marked ADAPTED:
+// Kept close to upstream. Three changes, all marked ADAPTED:
 //
 //   1. "use client" — it draws to a canvas and listens on window.
 //   2. The prop type is made optional. Upstream declares glitchColors,
 //      glitchSpeed, centerVignette, outerVignette, smooth and characters as
 //      REQUIRED even though every one of them has a default, so the component
 //      cannot be used the way its own defaults intend without restating all six.
+//   3. The animation loop is made unmount-safe. Upstream dereferences the canvas
+//      ref with a non-null assertion inside a requestAnimationFrame callback,
+//      which throws the moment React detaches it. It only showed up once the
+//      landing page's call to action became a client-side navigation: before
+//      that, leaving the page was a full document load and the whole frame went
+//      away at once, so a dangling frame had nothing left to crash into.
 //
 // Upstream: https://reactbits.dev/backgrounds/letter-glitch
 
@@ -16,15 +22,15 @@ import { useRef, useEffect } from "react";
 
 // ADAPTED: every prop optional, matching the defaults below.
 type LetterGlitchProps = {
-  glitchColors?: string[];
-  glitchSpeed?: number;
-  centerVignette?: boolean;
-  outerVignette?: boolean;
-  smooth?: boolean;
-  lightMode?: boolean;
-  backgroundColor?: string;
-  className?: string;
-  characters?: string;
+  glitchColors?: string[] | undefined;
+  glitchSpeed?: number | undefined;
+  centerVignette?: boolean | undefined;
+  outerVignette?: boolean | undefined;
+  smooth?: boolean | undefined;
+  lightMode?: boolean | undefined;
+  backgroundColor?: string | undefined;
+  className?: string | undefined;
+  characters?: string | undefined;
 };
 
 const LetterGlitch = ({
@@ -51,6 +57,9 @@ const LetterGlitch = ({
   const grid = useRef({ columns: 0, rows: 0 });
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const lastGlitchTime = useRef(Date.now());
+  // ADAPTED: false once the effect has torn down, so an in-flight frame stops
+  // instead of drawing to a canvas React has already detached.
+  const running = useRef(false);
 
   const lettersAndSymbols = Array.from(characters);
 
@@ -137,9 +146,12 @@ const LetterGlitch = ({
   };
 
   const drawLetters = () => {
-    if (!context.current || letters.current.length === 0) return;
+    // ADAPTED: was `canvasRef.current!`. The ref is null for one frame after
+    // unmount, and a non-null assertion there is a crash rather than a no-op.
+    const canvas = canvasRef.current;
+    if (!context.current || !canvas || letters.current.length === 0) return;
     const ctx = context.current;
-    const { width, height } = canvasRef.current!.getBoundingClientRect();
+    const { width, height } = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, width, height);
     ctx.font = `${fontSize}px monospace`;
     ctx.textBaseline = "top";
@@ -195,6 +207,9 @@ const LetterGlitch = ({
   };
 
   const animate = () => {
+    // ADAPTED: the loop asks whether it should still be running before doing
+    // any work, so the last queued frame after unmount is a no-op.
+    if (!running.current) return;
     const now = Date.now();
     if (now - lastGlitchTime.current >= glitchSpeed) {
       updateLetters();
@@ -214,6 +229,7 @@ const LetterGlitch = ({
     if (!canvas) return;
 
     context.current = canvas.getContext("2d");
+    running.current = true; // ADAPTED
     resizeCanvas();
     animate();
 
@@ -222,7 +238,10 @@ const LetterGlitch = ({
     const handleResize = () => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
-        cancelAnimationFrame(animationRef.current as number);
+        // ADAPTED: a debounced resize can land after unmount, and upstream
+        // would restart the loop from there.
+        if (!running.current) return;
+        if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
         resizeCanvas();
         animate();
       }, 100);
@@ -231,7 +250,14 @@ const LetterGlitch = ({
     window.addEventListener("resize", handleResize);
 
     return () => {
-      cancelAnimationFrame(animationRef.current!);
+      // ADAPTED: flag first, then cancel. Cancelling alone leaves any frame
+      // already dispatched to run, and clearing the timeout stops a pending
+      // resize from reviving the loop.
+      running.current = false;
+      if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+      clearTimeout(resizeTimeout);
+      context.current = null;
       window.removeEventListener("resize", handleResize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

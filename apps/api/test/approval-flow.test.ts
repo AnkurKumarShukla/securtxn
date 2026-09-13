@@ -35,7 +35,7 @@ let agentToken: string;
 let approverToken: string;
 let bridgeToken: string;
 const vendorIds: string[] = [];
-const CHAIN_ID = base.EIP712_CHAIN_ID;
+const CHAIN_ID = base.HEDERA_CHAIN_ID;
 
 const asAgent = () => ({ authorization: `Bearer ${agentToken}` });
 const asApprover = () => ({ authorization: `Bearer ${approverToken}` });

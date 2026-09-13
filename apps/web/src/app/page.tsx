@@ -7,6 +7,17 @@
 // itself absolutely, so it needs the hero as its containing block to sit over
 // the prism instead of over the top of the document.
 //
+// WHY THE WRAPPER. The product and the marketing page are deliberately made of
+// different material: the app is matte charcoal with soft extrusion, this page
+// is deep black with frosted glass over a WebGL prism. `data-surface="deep"`
+// restores the original surface ramp and type scale for this subtree only, so
+// the app's tokens can move without dragging the marketing page with them.
+//
+// `display: contents` rather than a styled div: the element carries the custom
+// properties down the tree but is not a box, so it cannot introduce a stacking
+// context or a containing block that the hero's absolutely positioned nav would
+// then resolve against.
+//
 // Spec: docs/architecture.md §7
 
 import { Footer } from "@/components/landing/Footer";
@@ -17,7 +28,7 @@ import { Solution } from "@/components/landing/Solution";
 
 export default function LandingPage() {
   return (
-    <>
+    <div data-surface="deep" style={{ display: "contents" }}>
       <main>
         <Hero />
         <Problem />
@@ -25,6 +36,6 @@ export default function LandingPage() {
         <HowItWorks />
       </main>
       <Footer />
-    </>
+    </div>
   );
 }

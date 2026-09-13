@@ -142,3 +142,55 @@ export const AcknowledgmentResponse = z.object({
   verifiedAt: z.string().datetime(),
 });
 export type AcknowledgmentResponse = z.infer<typeof AcknowledgmentResponse>;
+
+/**
+ * GET /payments — the list behind the payments screen.
+ *
+ * WHY A SEPARATE SHAPE FROM `PaymentSummary`. A list row answers "which of
+ * these needs me?", and the two things that answer it — who is being paid, and
+ * how far along it is — are not on the summary: `vendorId` is a uuid, and a
+ * uuid tells an operator nothing. So the payee's display name is resolved at
+ * read time and joined in here.
+ *
+ * It is resolved rather than stored for the same reason the consent prompt
+ * resolves it: a name copied into a row at creation time is a name that goes
+ * stale the moment the vendor is renamed.
+ */
+export const PaymentListItem = z.object({
+  id: Uuid,
+  invoiceRef: z.string(),
+  amount: AmountString,
+  token: z.string(),
+  network: Network,
+  status: PaymentStatus,
+  settlementMode: SettlementMode,
+  decision: PaymentDecision.nullable(),
+  decisionReasonCode: z.string().nullable(),
+  /** Resolved at read time from the payee's vendor record. */
+  payeeName: z.string().nullable(),
+  payeeVendorId: Uuid,
+  payerVendorId: Uuid.nullable(),
+  txHash: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type PaymentListItem = z.infer<typeof PaymentListItem>;
+
+export const PaymentListQuery = z.object({
+  /** Narrow to one lifecycle state, for the list's status filter. */
+  status: PaymentStatus.optional(),
+  /** Only payments this org raised. The dashboard always sends its own id. */
+  payerVendorId: Uuid.optional(),
+  /** Only payments addressed to this payee. */
+  vendorId: Uuid.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  /** An id from a previous page's `nextCursor`. Keyset, not offset. */
+  cursor: Uuid.optional(),
+});
+export type PaymentListQuery = z.infer<typeof PaymentListQuery>;
+
+export const PaymentList = z.object({
+  items: z.array(PaymentListItem),
+  /** Absent when this is the last page. */
+  nextCursor: Uuid.nullable(),
+});
+export type PaymentList = z.infer<typeof PaymentList>;

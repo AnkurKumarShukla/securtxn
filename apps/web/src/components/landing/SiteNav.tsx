@@ -47,10 +47,13 @@ const ITEMS: CardNavItem[] = [
     label: "App",
     bgColor: "rgba(22, 36, 72, 0.58)",
     textColor: "#f5f7fa",
+    // These used to point at /payments, /approvals and /evidence. All three are
+    // proxied to the API process by next.config.mjs, so every one of them
+    // resolved to JSON rather than to a page. The dashboard lives at /app.
     links: [
-      { label: "Payments", href: "/payments", ariaLabel: "Open payments" },
-      { label: "Approvals", href: "/approvals", ariaLabel: "Open the approval queue" },
-      { label: "Evidence", href: "/evidence", ariaLabel: "Open the evidence viewer" },
+      { label: "Dashboard", href: "/app", ariaLabel: "Open the dashboard" },
+      { label: "Send a payment", href: "/app/payments", ariaLabel: "Open the sender pipeline" },
+      { label: "Receive a payment", href: "/app/inbox", ariaLabel: "Open the payee desk" },
     ],
   },
 ];
@@ -69,7 +72,7 @@ export function SiteNav() {
       buttonBgColor="#5b8cff"
       buttonTextColor="#050609"
       ctaLabel="Launch App"
-      ctaHref="/payments"
+      ctaHref="/app"
       ease="power3.out"
       className="card-nav-securtxn"
     />

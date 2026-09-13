@@ -10,14 +10,25 @@
 // in the order the services enforce, so a gate that is broken shows up here as
 // a 4xx rather than as a silent pass.
 //
+// LEGACY — DO NOT COPY FROM THIS FILE, AND DO NOT RESTYLE IT.
+//
+// This page predates the product UI at `/app`. Every style below is an inline
+// `React.CSSProperties` object over raw hex, and `STATE_COLOUR` is a private
+// status map that contradicts `components/ui/status.ts`. It is scheduled for
+// deletion once the standalone World ID surface it hosts is confirmed covered
+// elsewhere. Until then it keeps working and nothing here changes — restyling a
+// file you intend to delete is waste, and it tells the next person the file is
+// current when it is not.
+//
 // Spec: docs/payment-flow.md
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { STEPS, api, messageOf, senderSignal, type StepId, type StepRecord } from "../../lib/flow";
 import { RUNNERS, StepError, freshContext, type RunContext } from "../../lib/runner";
+import { LegacyBanner } from "../../components/ui/LegacyBanner";
 import { WorldIdStep } from "./WorldIdStep";
 
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_EIP712_CHAIN_ID ?? "11155111");
+const CHAIN_ID = Number(process.env.NEXT_PUBLIC_HEDERA_CHAIN_ID ?? "296");
 
 export default function ConsolePage() {
   // The run context holds a FRESHLY GENERATED payee key, so it must not be
@@ -168,6 +179,7 @@ export default function ConsolePage() {
 
   return (
     <main style={S.main}>
+      <LegacyBanner page="flow console" instead="/app" />
       <header style={S.header}>
         <div>
           <h1 style={S.h1}>Flow console</h1>

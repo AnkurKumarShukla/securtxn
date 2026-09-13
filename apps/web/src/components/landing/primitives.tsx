@@ -28,7 +28,7 @@ export function SectionHeading({
   className = "",
 }: {
   children: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <h2
@@ -86,7 +86,7 @@ export function PrimaryButton({
 }: {
   href: string;
   children: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <Link
@@ -136,7 +136,7 @@ export function GhostButton({
 }: {
   href: string;
   children: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <Link
@@ -165,7 +165,7 @@ export function Section({
 }: {
   id: string;
   children: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <section id={id} className={`relative px-6 py-24 sm:py-32 lg:px-8 ${className}`}>

@@ -19,22 +19,22 @@ import React, { useEffect, useRef } from "react";
 import { Renderer, Triangle, Program, Mesh } from "ogl";
 
 type PrismProps = {
-  height?: number;
-  baseWidth?: number;
-  animationType?: "rotate" | "hover" | "3drotate";
-  glow?: number;
-  offset?: { x?: number; y?: number };
-  noise?: number;
-  transparent?: boolean;
-  scale?: number;
-  hueShift?: number;
-  colorFrequency?: number;
-  hoverStrength?: number;
-  inertia?: number;
-  bloom?: number;
-  suspendWhenOffscreen?: boolean;
-  timeScale?: number;
-  lightMode?: boolean;
+  height?: number | undefined;
+  baseWidth?: number | undefined;
+  animationType?: "rotate" | "hover" | "3drotate" | undefined;
+  glow?: number | undefined;
+  offset?: { x?: number; y?: number } | undefined;
+  noise?: number | undefined;
+  transparent?: boolean | undefined;
+  scale?: number | undefined;
+  hueShift?: number | undefined;
+  colorFrequency?: number | undefined;
+  hoverStrength?: number | undefined;
+  inertia?: number | undefined;
+  bloom?: number | undefined;
+  suspendWhenOffscreen?: boolean | undefined;
+  timeScale?: number | undefined;
+  lightMode?: boolean | undefined;
 };
 
 const Prism: React.FC<PrismProps> = ({
@@ -439,7 +439,7 @@ const Prism: React.FC<PrismProps> = ({
     };
 
     interface PrismContainer extends HTMLElement {
-      __prismIO?: IntersectionObserver;
+      __prismIO?: IntersectionObserver | undefined;
     }
 
     if (suspendWhenOffscreen) {

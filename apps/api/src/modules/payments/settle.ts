@@ -18,7 +18,7 @@
 //
 // Spec: docs/architecture.md §4.1, §4.5
 
-import { hashlockFor, newPreimage } from "@cp/contracts";
+import { computeLockId, hashlockFor, newPreimage, paymentRefFor } from "@cp/contracts";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type {
   ReleaseSecretRequest,
@@ -105,9 +105,166 @@ export class PaymentSettler {
       }
     }
 
-    return payment.settlementMode === "HTLC"
-      ? this.settleThroughEscrow({ payment, token, decimals, baseUnits, payee, input, approverId })
-      : this.settleDirectly({ payment, token, baseUnits, payee, approverId });
+    if (payment.settlementMode !== "HTLC") {
+      return this.settleDirectly({ payment, token, baseUnits, payee, approverId });
+    }
+
+    // The fork. Payer-funded escrow does not broadcast here — the platform does
+    // not hold the payer's key and must not. Under the mock gateway there is no
+    // payer wallet to prompt either, so that path stays on the treasury.
+    return this.deps.config.SETTLEMENT_FUNDING === "payer" && this.deps.chain.broadcasts
+      ? this.prepareEscrowForPayer({ payment, token, decimals, baseUnits, payee, input, approverId })
+      : this.settleThroughEscrow({ payment, token, decimals, baseUnits, payee, input, approverId });
+  }
+
+  /**
+   * Authorises an escrow the PAYER will fund, without moving anything.
+   *
+   * The secret is generated here and stays here. It has to: the payee claims by
+   * revealing it, so whoever holds it can take the money, and a payer who knew
+   * it could drain their own escrow the moment it was funded. That is the whole
+   * reason this is a two-step settle rather than one — the platform must choose
+   * the secret and cannot broadcast, the payer can broadcast and must never see
+   * the secret.
+   *
+   * Every other lock parameter is pinned now as well, including the lock id,
+   * which the contract derives from all of them. The payer's wallet is handed an
+   * instruction it can verify and cannot usefully alter: change the payee, the
+   * amount or the timelock and the resulting lock id no longer matches the one
+   * recorded here, and `recordLock` refuses it.
+   *
+   * The payment goes to APPROVED, not SENT. Nobody has paid yet, and a payment
+   * marked sent before the money moves is the one lie this flow cannot afford.
+   */
+  private async prepareEscrowForPayer(args: {
+    payment: {
+      id: string;
+      network: string;
+      token: string;
+      amount: Prisma.Decimal;
+      payerVendorId: string | null;
+      proposal: { id: string } | null;
+    };
+    token: Address;
+    decimals: number;
+    baseUnits: bigint;
+    payee: Address;
+    input: SettleRequest;
+    approverId: string;
+  }): Promise<SettleResponse> {
+    const payer = await this.payerAddressFor(args.payment.payerVendorId);
+
+    const seconds = args.input.timelockSeconds ?? this.deps.config.HTLC_TIMELOCK_SECONDS;
+    const timelock = new Date(Date.now() + seconds * 1000);
+    const timelockSeconds = Math.floor(timelock.getTime() / 1000);
+
+    const preimage = newPreimage();
+    const hashlock = hashlockFor(preimage);
+
+    const escrowAddress = this.escrowAddressOf("");
+    const paymentRef = paymentRefFor(args.payment.id);
+    const lockId = computeLockId({
+      paymentRef,
+      payer,
+      payee: args.payee,
+      token: args.token,
+      amount: args.baseUnits,
+      hashlock,
+      timelock: BigInt(timelockSeconds),
+    });
+
+    const sealed = encryptJson({ preimage }, this.deps.config.PII_ENCRYPTION_KEY);
+    const amount = fromBaseUnits(args.baseUnits, args.decimals);
+
+    const settlement = await this.deps.prisma.$transaction(async (tx) => {
+      const blob = await tx.encryptedBlob.create({
+        data: {
+          kind: "HTLC_PREIMAGE",
+          ciphertext: new Uint8Array(sealed.ciphertext),
+          iv: new Uint8Array(sealed.iv),
+          authTag: new Uint8Array(sealed.authTag),
+          contentType: "application/json",
+          byteLength: sealed.ciphertext.byteLength,
+        },
+      });
+
+      const row = await tx.htlcSettlement.create({
+        data: {
+          paymentRequestId: args.payment.id,
+          escrowAddress,
+          lockId,
+          hashlock,
+          timelock,
+          payerAddress: payer,
+          payeeAddress: args.payee,
+          tokenAddress: args.token,
+          amount,
+          onChainAmount: args.baseUnits.toString(),
+          status: "PENDING_LOCK",
+          // No transaction exists yet. This is the column the migration made
+          // nullable, and null here is the honest value.
+          lockTxHash: null,
+          preimageEncryptedRef: blob.id,
+        },
+      });
+
+      await tx.paymentRequest.update({
+        where: { id: args.payment.id },
+        data: { status: "APPROVED" },
+      });
+
+      return row;
+    });
+
+    return {
+      paymentRequestId: args.payment.id,
+      mode: "HTLC",
+      status: "APPROVED",
+      txHash: null,
+      explorerUrl: null,
+      broadcast: false,
+      settlement: toSettlementSummary(settlement),
+      preparedLock: {
+        escrowAddress,
+        lockId,
+        paymentRef,
+        payerAddress: payer,
+        payeeAddress: args.payee,
+        tokenAddress: args.token,
+        amount,
+        onChainAmount: args.baseUnits.toString(),
+        hashlock,
+        timelock: timelock.toISOString(),
+        timelockSeconds,
+      },
+    };
+  }
+
+  /**
+   * The address the payer must send from.
+   *
+   * Their CONFIRMED wallet, not whatever is connected in their browser. The
+   * contract records msg.sender as the party a refund returns to, so this is
+   * also the address that gets the money back if nobody claims — which makes it
+   * exactly as much a subject of verification as the payee's.
+   */
+  private async payerAddressFor(payerVendorId: string | null): Promise<Address> {
+    if (!payerVendorId) {
+      throw new UnprocessableError(
+        "This payment records no payer organisation, so there is no wallet to fund the escrow from",
+      );
+    }
+    const wallet = await this.deps.prisma.vendorWallet.findFirst({
+      where: { vendorId: payerVendorId, status: "CONFIRMED" },
+      orderBy: { version: "desc" },
+      select: { address: true },
+    });
+    if (!wallet) {
+      throw new UnprocessableError(
+        "The paying organisation has no confirmed payout wallet. Connect and verify a wallet in Setup before settling.",
+      );
+    }
+    return wallet.address as Address;
   }
 
   /**
@@ -145,7 +302,7 @@ export class PaymentSettler {
     }
 
     const valid = await verifySecretRelease({
-      chainId: this.deps.config.EIP712_CHAIN_ID,
+      chainId: this.deps.config.HEDERA_CHAIN_ID,
       address: settlement.payeeAddress,
       signature: input.signature,
       message: buildSecretReleaseMessage({
@@ -261,6 +418,8 @@ export class PaymentSettler {
       txHash,
       explorerUrl: this.deps.chain.explorerUrl("transaction", txHash),
       broadcast: this.deps.chain.broadcasts,
+      // Treasury-funded: nothing is left for the payer to do.
+      preparedLock: null,
       settlement: null,
     };
   }
@@ -343,6 +502,8 @@ export class PaymentSettler {
       txHash: locked.lockTxHash,
       explorerUrl: this.deps.chain.explorerUrl("transaction", locked.lockTxHash),
       broadcast: this.deps.chain.broadcasts,
+      // Treasury-funded: nothing is left for the payer to do.
+      preparedLock: null,
       settlement: toSettlementSummary(settlement),
     };
   }

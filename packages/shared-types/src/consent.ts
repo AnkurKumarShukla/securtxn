@@ -100,6 +100,17 @@ export const ConsentPrompt = z.object({
   invoiceRef: z.string(),
   payeeAddress: EvmAddress,
   requestedAt: IsoDateTime,
+  /**
+   * Whether the payee must pass a World ID check before accepting.
+   *
+   * NOT A UI HINT. `decide` refuses an acceptance without one when this is
+   * true, so a screen that did not know called it optional, offered Accept, and
+   * produced an error for something the person had been told they could skip.
+   * The condition is the same one that makes the payment worth challenging at
+   * all — a new or changed payout address — so it varies per payment and cannot
+   * be assumed either way.
+   */
+  challengeRequired: z.boolean(),
 });
 export type ConsentPrompt = z.infer<typeof ConsentPrompt>;
 

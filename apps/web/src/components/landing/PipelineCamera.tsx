@@ -30,7 +30,7 @@ type Artifact = {
   title: string;
   rows: [string, string][];
   /** Renders the card in the verified green instead of the neutral surface. */
-  tone?: "signal" | "verified";
+  tone?: "signal" | "verified" | undefined;
 };
 
 type Stage = {

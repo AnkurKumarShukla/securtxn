@@ -100,7 +100,7 @@ export async function denyPayment(
 }
 
 function chainIdOf(app: FastifyInstance): number {
-  return (app as unknown as { config: { EIP712_CHAIN_ID: number } }).config.EIP712_CHAIN_ID;
+  return (app as unknown as { config: { HEDERA_CHAIN_ID: number } }).config.HEDERA_CHAIN_ID;
 }
 
 /**

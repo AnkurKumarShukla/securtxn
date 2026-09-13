@@ -75,17 +75,62 @@ export const SettleRequest = z.object({
 });
 export type SettleRequest = z.infer<typeof SettleRequest>;
 
+/**
+ * The lock the PAYER's wallet is being asked to execute.
+ *
+ * WHY THE PLATFORM FIXES EVERY FIELD. The payee claims by revealing a secret,
+ * so whoever chooses the secret controls the escrow — it cannot be the payer,
+ * and it cannot be handed to them. The platform therefore generates it, derives
+ * the hashlock, and pins every other parameter at approval time. What it cannot
+ * do is broadcast, because it does not hold the payer's key.
+ *
+ * So this is an instruction, not a receipt. The payer's wallet must call
+ * `lock()` with exactly these values: the contract derives the lock id from all
+ * of them, and `POST /payments/:id/settlement/lock` recomputes it and refuses
+ * anything that does not match. A payer who alters the payee, the amount or the
+ * timelock produces a different lock id and is rejected.
+ */
+export const PreparedLock = z.object({
+  /** The PaymentHtlc contract the payer must approve and then call. */
+  escrowAddress: EvmAddress,
+  /** What the contract will derive. Precomputed so the caller can check itself. */
+  lockId: Bytes32,
+  /** The contract's own reference for this payment. */
+  paymentRef: Bytes32,
+  /** Must equal the wallet that sends the transaction — the contract uses msg.sender. */
+  payerAddress: EvmAddress,
+  payeeAddress: EvmAddress,
+  tokenAddress: EvmAddress,
+  amount: AmountString,
+  /** The figure the transaction carries, in the token's base units. */
+  onChainAmount: z.string().regex(/^[0-9]{1,78}$/, "must be a base-unit integer"),
+  hashlock: Bytes32,
+  timelock: IsoDateTime,
+  /** The same instant as seconds since the epoch, which is what the contract takes. */
+  timelockSeconds: z.number().int().positive(),
+});
+export type PreparedLock = z.infer<typeof PreparedLock>;
+
 export const SettleResponse = z.object({
   paymentRequestId: Uuid,
   mode: SettlementMode,
-  status: z.enum(["SENT"]),
-  txHash: z.string(),
+  /**
+   * SENT means the money has moved. APPROVED means it has not: the payment is
+   * authorised and the escrow is prepared, and the payer's own wallet has still
+   * to fund it. Keeping these distinct is the point — a payment marked sent
+   * before anyone has paid is the one lie this flow cannot afford.
+   */
+  status: z.enum(["SENT", "APPROVED"]),
+  /** Null when nothing has been broadcast yet, which is the payer-funded case. */
+  txHash: z.string().nullable(),
   /** Null when nothing was broadcast, so a UI cannot link to a fiction. */
   explorerUrl: z.string().nullable(),
   /** False means no transaction exists on any chain (D21). */
   broadcast: z.boolean(),
   /** Present only for HTLC. The escrow the payee must now claim. */
   settlement: z.unknown().nullable(),
+  /** Present when the payer must now fund the escrow themselves. */
+  preparedLock: PreparedLock.nullable().default(null),
 });
 export type SettleResponse = z.infer<typeof SettleResponse>;
 
@@ -134,7 +179,8 @@ export const SettlementSummary = z.object({
   tokenAddress: EvmAddress,
   amount: AmountString,
   onChainAmount: z.string(),
-  lockTxHash: z.string(),
+  /** Null while PENDING_LOCK: no transaction exists until the payer sends one. */
+  lockTxHash: z.string().nullable(),
   claimTxHash: z.string().nullable(),
   refundTxHash: z.string().nullable(),
   /** Null until claimed. Once set, this is the receipt the payee published. */

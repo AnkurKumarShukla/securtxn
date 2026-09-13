@@ -113,13 +113,6 @@ const EnvSchema = z
         return shape.data;
       }),
 
-    /**
-     * EIP-712 domain chainId. Part of what a payee signs, so it is replay
-     * protection: a signature produced for one chain will not verify against
-     * another. Sepolia by default.
-     */
-    EIP712_CHAIN_ID: z.coerce.number().int().positive().default(11155111),
-
     // --- swappable implementations, resolved in container.ts (D09) ---
     IDENTITY_PROVIDER: z.enum(["digilocker", "generic", "mock"]).default("mock"),
     VENDOR_MATCHER: z.enum(["fallback", "cre"]).default("fallback"),
@@ -214,7 +207,21 @@ const EnvSchema = z
     WORLD_VERIFY_BASE_URL: z.string().default("https://developer.world.org/api/v4/verify"),
 
     // --- Hedera ATS (§4.5, D40/D42) ---
-    /** 296 = Hedera testnet, 295 = mainnet. */
+    /**
+     * The chain, and the only one. 296 = Hedera testnet, 295 = mainnet.
+     *
+     * ONE VALUE, DELIBERATELY. There used to be a second, `EIP712_CHAIN_ID`,
+     * for the domain separator a payee signs against — defaulted to Sepolia,
+     * a chain this deployment never touches. Two settings that must always
+     * agree is a bug with a deployment step attached: the domain separator only
+     * has to match between signer and verifier, so a wrong-but-consistent value
+     * verifies fine and silently binds every signature to the wrong chain. Worse,
+     * they had already drifted — credential issuance read this one while
+     * signature verification read the other.
+     *
+     * It is genuine replay protection: a signature produced for one chain does
+     * not verify against another. That only works if the number is true.
+     */
     HEDERA_CHAIN_ID: z.coerce.number().int().positive().default(296),
     /**
      * Signs verifiable credentials and submits grantKyc/revokeKyc.
@@ -303,6 +310,25 @@ const EnvSchema = z
      * that long, which is the problem this product exists to shorten.
      */
     HTLC_TIMELOCK_SECONDS: z.coerce.number().int().min(60).default(86_400),
+
+    /**
+     * Whose money funds an escrow.
+     *
+     * "payer" is the product: the sender locks their own tokens from their own
+     * wallet, and a refund after the timelock returns to them. The platform
+     * never holds the funds, which means it cannot lose or misdirect them, and
+     * the recoverability guarantee stops depending on our custody.
+     *
+     * "treasury" is the older model, kept because two things still need it: the
+     * flow console drives both sides of a payment from one browser and has no
+     * wallet to prompt, and the mock chain gateway has no payer to broadcast
+     * from. It pays out of a platform-held pool, which is simpler and is what
+     * every existing test exercises.
+     *
+     * Applies to HTLC only. A DIRECT payment is a single transfer and still
+     * goes from the treasury regardless.
+     */
+    SETTLEMENT_FUNDING: z.enum(["payer", "treasury"]).default("payer"),
     /**
      * Business-logic configuration registered on the resolver:
      * 0x..01 equity, 0x..02 bond. Passed to Bond.create as `configId`.
@@ -320,6 +346,20 @@ const EnvSchema = z
       z.coerce.number().int().positive().optional(),
     ),
 
+    /**
+     * Where this deployment is reachable from the public internet.
+     *
+     * ONE VALUE TO CHANGE WHEN THE DEPLOYMENT MOVES. Several things must point
+     * at the same public host — DigiLocker's consent redirect, and the base URL
+     * the CRE workflow was deployed with — and keeping them as separate
+     * variables meant a move silently half-worked: consent came back to the old
+     * host, or the enclave called one that no longer answered.
+     *
+     * Anything derived from it below is only a DEFAULT, so an explicit value
+     * still wins where a deployment genuinely needs to differ.
+     */
+    PUBLIC_BASE_URL: z.string().url().optional(),
+
     // --- DigiLocker (§4.7) ---
     SANDBOX_BASE_URL: z.string().url().default("https://api.sandbox.co.in"),
     SANDBOX_LIVE_KEY: z.string().optional(),
@@ -327,6 +367,14 @@ const EnvSchema = z
     DIGILOCKER_REDIRECT_URL: z.string().url().optional(),
     DIGILOCKER_FIXTURE_DIR: z.string().default("./fixtures/digilocker-synthetic"),
   })
+  .transform((env) => ({
+    ...env,
+    // Derived, not duplicated. DigiLocker redirects a real browser here after
+    // consent, so it has to be the public host — never localhost.
+    DIGILOCKER_REDIRECT_URL:
+      env.DIGILOCKER_REDIRECT_URL ??
+      (env.PUBLIC_BASE_URL ? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/identity/callback` : undefined),
+  }))
   .superRefine((env, ctx) => {
     const fail = (path: string, message: string) =>
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });

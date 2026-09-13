@@ -54,12 +54,25 @@ export class SettlementService {
         `Payment settles as '${payment.settlementMode}'; an escrow cannot be recorded against it`,
       );
     }
-    if (payment.status !== "SENT" && payment.status !== "CONFIRMED_ON_CHAIN") {
+    // APPROVED is the payer-funded case: the platform authorised the escrow and
+    // prepared it, and the payer has now funded it from their own wallet. SENT
+    // and CONFIRMED_ON_CHAIN are the treasury case, where the broadcast has
+    // already happened and this endpoint is only recording it.
+    const prepared = payment.htlcSettlement;
+    const payerFunded = prepared?.status === "PENDING_LOCK";
+
+    if (payerFunded) {
+      if (payment.status !== "APPROVED") {
+        throw new UnprocessableError(
+          `Payment is '${payment.status}'; a prepared escrow can only be funded while it is APPROVED`,
+        );
+      }
+    } else if (payment.status !== "SENT" && payment.status !== "CONFIRMED_ON_CHAIN") {
       throw new UnprocessableError(
         `Payment is '${payment.status}'; a lock can only be recorded once the payment has been sent`,
       );
     }
-    if (payment.htlcSettlement) {
+    if (prepared && !payerFunded) {
       throw new ConflictError("This payment already has an escrow");
     }
 
@@ -82,6 +95,52 @@ export class SettlementService {
       throw new UnprocessableError(
         "Lock id does not match the reported parameters; the escrow could not be located on chain",
       );
+    }
+
+    // A prepared escrow is UPDATED, never rewritten. Its row already holds the
+    // preimage the payee will need, and creating a second one would strand it —
+    // the money would be locked against a hashlock whose secret nothing points
+    // at any more, and nobody could ever claim it.
+    if (payerFunded) {
+      if (prepared.lockId.toLowerCase() !== input.lockId.toLowerCase()) {
+        throw new UnprocessableError(
+          "This lock does not match the escrow that was authorised for this payment",
+        );
+      }
+      const updated = await this.deps.prisma.$transaction(async (tx) => {
+        const row = await tx.htlcSettlement.update({
+          where: { id: prepared.id },
+          data: { status: "LOCKED", lockTxHash: input.lockTxHash },
+        });
+        // Only now. The payer's transaction IS the send, so this is the moment
+        // the money actually left — not when the approver authorised it.
+        await tx.paymentRequest.update({
+          where: { id: paymentId },
+          data: { status: "SENT", txHash: input.lockTxHash },
+        });
+        await this.deps.evidence.append(tx, {
+          eventType: "htlc_locked",
+          paymentRequestId: paymentId,
+          timestamp: new Date().toISOString(),
+          // The hashlock goes in; the secret never does. An evidence chain
+          // carrying the preimage before it was spent would be a public key to
+          // the escrow (design principle 2).
+          data: {
+            escrowAddress: row.escrowAddress,
+            lockId: row.lockId,
+            hashlock: row.hashlock,
+            timelock: row.timelock.toISOString(),
+            amount: row.amount.toString(),
+            txHash: input.lockTxHash,
+            // Recorded because it changes what the row MEANS: the money came
+            // from the payer's own wallet, and a refund returns there.
+            fundedBy: "payer",
+            payerAddress: row.payerAddress,
+          },
+        });
+        return row;
+      });
+      return toSettlementSummary(updated);
     }
 
     const row = await this.deps.prisma.$transaction((tx) =>

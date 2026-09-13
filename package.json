@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@9.12.0",
-  "engines": { "node": ">=20.11" },
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
@@ -11,7 +13,10 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "db:migrate": "pnpm --filter @cp/api prisma migrate dev",
-    "db:seed": "pnpm --filter @cp/api seed"
+    "db:seed": "pnpm --filter @cp/api seed",
+    "tunnel": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/tunnel.ps1",
+    "dev:api": "pnpm --filter @cp/api dev",
+    "dev:web": "pnpm --filter @cp/web dev"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

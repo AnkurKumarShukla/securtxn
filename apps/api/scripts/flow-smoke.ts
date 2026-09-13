@@ -26,7 +26,7 @@ import { loadConfig } from "../src/config/index.js";
 
 const config = loadConfig();
 const BASE = process.env.SMOKE_API_BASE ?? "http://127.0.0.1:3000";
-const CHAIN_ID = config.EIP712_CHAIN_ID;
+const CHAIN_ID = config.HEDERA_CHAIN_ID;
 
 const payee = privateKeyToAccount(generatePrivateKey());
 

@@ -163,6 +163,18 @@ export const EvidencePayload = z.discriminatedUnion("eventType", [
       timelock: IsoDateTime,
       amount: AmountString,
       txHash: z.string(),
+      /**
+       * Whose money is in the escrow.
+       *
+       * Material rather than decorative: the contract refunds to whoever sent
+       * the lock, so this says where the funds return if nobody claims. A
+       * reader auditing a refund months later cannot infer it from anything
+       * else in the chain. Optional because records written before payer
+       * funding existed do not carry it, and rewriting history to add a field
+       * would break every hash after it.
+       */
+      fundedBy: z.enum(["payer", "treasury"]).optional(),
+      payerAddress: EvmAddress.optional(),
     }),
   }),
   z.object({

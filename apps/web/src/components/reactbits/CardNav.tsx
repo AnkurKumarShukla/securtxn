@@ -35,17 +35,17 @@ export type CardNavItem = {
 
 export interface CardNavProps {
   logo: string;
-  logoAlt?: string;
+  logoAlt?: string | undefined;
   items: CardNavItem[];
-  className?: string;
-  ease?: string;
-  baseColor?: string;
-  menuColor?: string;
-  buttonBgColor?: string;
-  buttonTextColor?: string;
+  className?: string | undefined;
+  ease?: string | undefined;
+  baseColor?: string | undefined;
+  menuColor?: string | undefined;
+  buttonBgColor?: string | undefined;
+  buttonTextColor?: string | undefined;
   /** ADAPTED: upstream hardcodes "Get Started" and no destination. */
-  ctaLabel?: string;
-  ctaHref?: string;
+  ctaLabel?: string | undefined;
+  ctaHref?: string | undefined;
   /**
    * ADAPTED: frosted-glass surface.
    *
@@ -58,7 +58,7 @@ export interface CardNavProps {
    * Off by default so upstream's appearance is still what you get without
    * asking for this.
    */
-  glass?: boolean;
+  glass?: boolean | undefined;
 }
 
 /** ADAPTED: inlined in place of react-icons/go GoArrowUpRight. */
@@ -256,12 +256,12 @@ const CardNav: React.FC<CardNavProps> = ({
             style={{ color: menuColor || "#000" }}
           >
             <div
-              className={`hamburger-line w-[30px] h-[2px] bg-current transition-[transform,opacity,margin] duration-300 ease-linear [transform-origin:50%_50%] ${
+              className={`hamburger-line w-[30px] h-[2px] bg-current transition-[transform,opacity,margin] duration-300 ease-linear motion-reduce:transition-none [transform-origin:50%_50%] ${
                 isHamburgerOpen ? "translate-y-[4px] rotate-45" : ""
               } group-hover:opacity-75`}
             />
             <div
-              className={`hamburger-line w-[30px] h-[2px] bg-current transition-[transform,opacity,margin] duration-300 ease-linear [transform-origin:50%_50%] ${
+              className={`hamburger-line w-[30px] h-[2px] bg-current transition-[transform,opacity,margin] duration-300 ease-linear motion-reduce:transition-none [transform-origin:50%_50%] ${
                 isHamburgerOpen ? "-translate-y-[4px] -rotate-45" : ""
               } group-hover:opacity-75`}
             />

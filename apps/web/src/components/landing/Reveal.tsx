@@ -14,8 +14,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 type RevealProps = {
   children: ReactNode;
   /** Stagger, in seconds, for items revealed as a group. */
-  delay?: number;
-  className?: string;
+  delay?: number | undefined;
+  className?: string | undefined;
 };
 
 export function Reveal({ children, delay = 0, className = "" }: RevealProps) {

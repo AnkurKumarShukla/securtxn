@@ -67,7 +67,10 @@ export function Hero() {
         </p>
 
         <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <PrimaryButton href="/payments">Launch App</PrimaryButton>
+          {/* /app, not /payments. next.config.mjs proxies the `payments`
+              prefix to the API process, so the old target never reached a
+              page at all. */}
+          <PrimaryButton href="/app">Launch App</PrimaryButton>
           <GhostButton href="#how">See how it works</GhostButton>
         </div>
       </div>

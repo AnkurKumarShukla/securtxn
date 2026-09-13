@@ -170,8 +170,14 @@ export class ConsentService {
     const notification = await this.deps.prisma.notification.findFirst({
       where: { paymentRequestId: payment.id, kind: "CONSENT_REQUESTED" },
       orderBy: { createdAt: "desc" },
-      select: { createdAt: true },
+      select: { createdAt: true, payload: true },
     });
+
+    // Read back from the notification rather than recomputed. It was decided
+    // when consent was requested and written into that row; deciding it a
+    // second time here could disagree with what `decide` will enforce, and the
+    // payee would be told one thing and refused for another.
+    const payload = (notification?.payload ?? {}) as { challengeRequired?: boolean };
 
     return {
       paymentRequestId: payment.id,
@@ -184,6 +190,7 @@ export class ConsentService {
       invoiceRef: payment.invoiceRef,
       payeeAddress: payment.vendorWallet.address,
       requestedAt: (notification?.createdAt ?? payment.updatedAt).toISOString(),
+      challengeRequired: payload.challengeRequired === true,
     };
   }
 
@@ -219,7 +226,7 @@ export class ConsentService {
       }
 
       const valid = await verifyPayeeConsent({
-        chainId: this.deps.config.EIP712_CHAIN_ID,
+        chainId: this.deps.config.HEDERA_CHAIN_ID,
         address: input.signerAddress!,
         signature: input.signature!,
         message: buildPayeeConsentMessage({

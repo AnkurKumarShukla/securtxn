@@ -3,7 +3,9 @@
 // It carries no authority: the consent lives on DigiLocker's side and the API
 // confirms it by polling the session, never by trusting a query parameter on
 // this redirect. So this page exists to tell the person the step worked and
-// send them back to the console — nothing here is a security boundary.
+// send them back to the dashboard — nothing here is a security boundary.
+
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -16,57 +18,75 @@ export default async function IdentityCallbackPage({
   const asText = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
   // DigiLocker spells the outcome differently depending on the path taken, so
-  // anything that is not clearly a success is reported as "check the console"
+  // anything that is not clearly a success is reported as "check the dashboard"
   // rather than guessed at.
   const status = asText(params.status) ?? asText(params.code) ?? "";
   const ok = /success|succeed|granted/i.test(status) || Object.keys(params).length > 0;
 
   return (
-    <main style={S.main}>
-      <h1 style={S.h1}>{ok ? "Consent captured" : "Consent not confirmed"}</h1>
-      <p style={S.p}>
-        {ok
-          ? "DigiLocker has recorded your consent. Go back to the console tab — it is polling for this and will continue on its own."
-          : "Nothing came back that looks like a granted consent. Return to the console and start the identity step again."}
-      </p>
+    <div className="relative min-h-screen">
+      <div aria-hidden className="ground pointer-events-none fixed inset-0 -z-10" />
 
-      <p style={S.p}>
-        <a style={S.link} href="/console">
-          Back to the console
-        </a>
-      </p>
+      <main className="mx-auto w-full max-w-2xl px-6 py-24">
+        <div className="panel p-7">
+          <div className="flex items-start gap-3">
+            <span
+              className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                ok ? "bg-verified-400/12 text-verified-400" : "bg-pending-400/12 text-pending-400"
+              }`}
+            >
+              {ok ? (
+                <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3.5 8.5 6.5 11.5 12.5 5" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                  <path d="M8 4v5M8 11.3v.3" />
+                </svg>
+              )}
+            </span>
 
-      {Object.keys(params).length > 0 && (
-        <>
-          <h2 style={S.h2}>What DigiLocker returned</h2>
-          <pre style={S.pre}>{JSON.stringify(params, null, 2)}</pre>
-        </>
-      )}
-    </main>
+            <div className="min-w-0">
+              <h1 className="text-[20px] font-semibold tracking-tight text-mist-50">
+                {ok ? "Consent captured" : "Consent not confirmed"}
+              </h1>
+              <p className="mt-2 text-[13.5px] leading-relaxed text-mist-400">
+                {ok
+                  ? "DigiLocker has recorded your consent. Go back to the dashboard tab — it is polling for this and will continue on its own."
+                  : "Nothing came back that looks like a granted consent. Return to the dashboard and start the identity step again."}
+              </p>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Link
+                  href="/app"
+                  className="inline-flex h-9 items-center rounded-md bg-linear-to-b from-signal-400 to-signal-600 px-4 text-[13px] font-medium text-ink-950 shadow-[0_1px_0_0_rgba(255,255,255,0.40)_inset] transition-[filter] hover:brightness-[1.06]"
+                >
+                  Back to the dashboard
+                </Link>
+                {/* The original console still works, and an already-open
+                    DigiLocker tab may have been launched from it. */}
+                <Link
+                  href="/console"
+                  className="inline-flex h-9 items-center rounded-md hairline-strong bg-white/[0.045] px-4 text-[13px] text-mist-200 transition-colors hover:border-hairline-active hover:text-mist-50"
+                >
+                  The old console
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {Object.keys(params).length > 0 && (
+            <div className="mt-7">
+              <p className="mb-2 font-mono text-[10.5px] tracking-[0.16em] text-mist-500 uppercase">
+                What DigiLocker returned
+              </p>
+              <pre className="well max-h-72 overflow-auto px-3 py-2.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap text-mist-300">
+                {JSON.stringify(params, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
   );
 }
-
-const S: Record<string, React.CSSProperties> = {
-  main: { maxWidth: 640, margin: "0 auto", padding: "64px 24px", color: "#e4e4e7" },
-  h1: { fontSize: 22, fontWeight: 600, margin: "0 0 12px" },
-  h2: {
-    fontSize: 11,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    color: "#71717a",
-    margin: "28px 0 8px",
-  },
-  p: { color: "#a1a1aa", fontSize: 14, lineHeight: 1.6, margin: "0 0 14px" },
-  link: { color: "#60a5fa" },
-  pre: {
-    fontSize: 12,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    color: "#d4d4d8",
-    background: "#18181b",
-    border: "1px solid #27272a",
-    borderRadius: 8,
-    padding: 12,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-};

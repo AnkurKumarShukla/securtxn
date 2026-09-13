@@ -16,6 +16,13 @@ const ReadyResponse = z.object({
   checks: z.object({ database: z.enum(["up", "down"]) }),
 });
 
+const KeepAliveResponse = z.object({
+  status: z.literal("awake"),
+  uptimeSeconds: z.number(),
+  /** What the pinger is keeping warm, so a stray request is self-explanatory. */
+  purpose: z.literal("prevents the host idling this service to sleep"),
+});
+
 export const healthRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     "/health",
@@ -33,6 +40,32 @@ export const healthRoutes: FastifyPluginAsyncZod = async (app) => {
       status: "ok" as const,
       uptimeSeconds: Math.round(process.uptime()),
       version: app.config.NODE_ENV,
+    }),
+  );
+
+  app.get(
+    "/health/keep-alive",
+    {
+      config: { rateLimit: false },
+      schema: {
+        tags: ["health"],
+        summary: "Keep-alive — pinged on a schedule so the host does not idle this out",
+        description:
+          "Separate from /health deliberately. Liveness is what the PLATFORM probes " +
+          "to decide whether to restart the process; this is what a scheduled pinger " +
+          "hits to stop a free-tier host putting the service to sleep. Sharing one " +
+          "endpoint would mean a pinger outage looked like a liveness failure, and a " +
+          "restart loop would look like a missed ping. " +
+          "It touches nothing: no database, no chain, no external call. A keep-alive " +
+          "that depended on Postgres would take the service down with it, which is " +
+          "the opposite of keeping it up.",
+        response: { 200: KeepAliveResponse },
+      },
+    },
+    async () => ({
+      status: "awake" as const,
+      uptimeSeconds: Math.round(process.uptime()),
+      purpose: "prevents the host idling this service to sleep" as const,
     }),
   );
 

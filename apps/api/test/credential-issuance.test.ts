@@ -40,7 +40,7 @@ const PAYEE = privateKeyToAccount(
 
 const base = loadConfig();
 const prisma = new PrismaClient({ datasources: { db: { url: base.DATABASE_URL } } });
-const WALLET_CHAIN_ID = base.EIP712_CHAIN_ID;
+const WALLET_CHAIN_ID = base.HEDERA_CHAIN_ID;
 
 // Two servers, two configs: one with the issuer key set (the path under
 // test), one without (the "fails closed, does not block confirmation"

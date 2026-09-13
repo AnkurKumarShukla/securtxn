@@ -22,7 +22,7 @@ const Schema = z.object({
 
   /** `local` transport only. */
   KEYSTORE_PATH: z.string().optional(),
-  SEPOLIA_RPC_URL: z.string().url().optional(),
+  HEDERA_JSON_RPC_URL: z.string().url().optional(),
 
   POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(15),
 

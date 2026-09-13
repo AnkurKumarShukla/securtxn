@@ -12,21 +12,11 @@
 //
 // Spec: docs/architecture.md §4.5 (D41)
 
-import { createWalletClient, createPublicClient, http, defineChain, type Hex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { createPublicClient, http, type Hex } from "viem";
 import { SECRET_RELEASE_TYPES, SECRET_RELEASE_STATEMENT, domainFor } from "@cp/shared-types";
+import { CHAIN_ID, RPC_URL, hederaTestnet } from "./chain";
+import type { PayeeSigner } from "./wallet";
 import { api, messageOf } from "./flow";
-
-const RPC = process.env.NEXT_PUBLIC_HEDERA_JSON_RPC_URL ?? "https://testnet.hashio.io/api";
-const HEDERA_CHAIN_ID = Number(process.env.NEXT_PUBLIC_HEDERA_CHAIN_ID ?? "296");
-const EIP712_CHAIN_ID = Number(process.env.NEXT_PUBLIC_EIP712_CHAIN_ID ?? "296");
-
-const hederaTestnet = defineChain({
-  id: HEDERA_CHAIN_ID,
-  name: "Hedera Testnet",
-  nativeCurrency: { name: "HBAR", symbol: "HBAR", decimals: 18 },
-  rpcUrls: { default: { http: [RPC] } },
-});
 
 /** Only the one function this needs. */
 const CLAIM_ABI = [
@@ -46,12 +36,21 @@ export type ClaimProgress = (line: string) => void;
 
 export async function claimEscrow(input: {
   paymentId: string;
-  privateKey: `0x${string}`;
+  /**
+   * Whoever is claiming, and whatever holds their key.
+   *
+   * Takes a signer rather than a private key so the claim works identically
+   * from a generated key and from MetaMask. With MetaMask the person sees and
+   * approves both the signature and the transaction, which is the point — the
+   * reveal below IS the receipt, and a receipt nobody consciously produced is
+   * not worth much.
+   */
+  signer: PayeeSigner;
   token: string;
   report: ClaimProgress;
 }): Promise<{ claimTxHash: string }> {
-  const { paymentId, privateKey, token, report } = input;
-  const account = privateKeyToAccount(privateKey);
+  const { paymentId, signer, token, report } = input;
+  const { address, client } = signer;
 
   const settlement = await api(`/payments/${paymentId}/settlement`, { token });
   if (!settlement.ok) throw new Error(`settlement → ${messageOf(settlement.body)}`);
@@ -65,14 +64,19 @@ export async function claimEscrow(input: {
 
   // 1. Prove control of the payout address. The lock id is inside the signed
   //    payload, so a signature captured for one escrow cannot open the next.
-  report("signing the secret release…");
-  const signature = await account.signTypedData({
-    domain: domainFor(EIP712_CHAIN_ID),
+  report(
+    signer.mode === "metamask"
+      ? "approve the signature in MetaMask…"
+      : "signing the secret release…",
+  );
+  const signature = await client.signTypedData({
+    account: address,
+    domain: domainFor(CHAIN_ID),
     types: SECRET_RELEASE_TYPES,
     primaryType: "SecretRelease",
     message: {
       paymentRequestId: paymentId,
-      recipientAddress: account.address,
+      recipientAddress: address,
       lockId,
       statement: SECRET_RELEASE_STATEMENT,
     },
@@ -90,17 +94,25 @@ export async function claimEscrow(input: {
 
   // 3. Reveal it on chain. This is the moment the money becomes theirs, and the
   //    transaction itself is the proof they received it.
-  report("claiming on chain…");
-  const wallet = createWalletClient({ account, chain: hederaTestnet, transport: http(RPC) });
-  const claimTxHash = await wallet.writeContract({
+  report(
+    signer.mode === "metamask" ? "confirm the claim in MetaMask…" : "claiming on chain…",
+  );
+  const claimTxHash = await client.writeContract({
+    account: address,
+    chain: hederaTestnet,
     address: escrowAddress,
     abi: CLAIM_ABI,
     functionName: "claim",
     args: [lockId, preimage],
+    // Hedera charges by gas actually used, so an explicit ceiling here costs
+    // nothing and avoids an estimate that the relay sometimes gets wrong.
     gas: 1_000_000n,
   });
 
-  const publicClient = createPublicClient({ chain: hederaTestnet, transport: http(RPC) });
+  // Read through our own RPC rather than the wallet's: MetaMask's transport
+  // answers from whatever node it is pointed at, and waiting for a receipt is a
+  // read we would rather not have blocked on the extension being open.
+  const publicClient = createPublicClient({ chain: hederaTestnet, transport: http(RPC_URL) });
   const receipt = await publicClient.waitForTransactionReceipt({ hash: claimTxHash });
   if (receipt.status !== "success") throw new Error(`claim reverted (tx ${claimTxHash})`);
 

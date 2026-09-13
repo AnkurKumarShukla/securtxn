@@ -10,6 +10,17 @@
 // payee's wallet, and a payout key that the platform holds is not a payout key
 // the payee controls. Clearing site data loses it, which is the correct
 // trade-off for a test harness — and the UI says so.
+//
+// THE GENERATED KEY IS NO LONGER THE POINT. A payee can now connect MetaMask
+// instead, and when they do, `mode` is "metamask" and `address` names the
+// account they own. What persists here is then only which account the
+// onboarding belongs to — losing this storage costs them the vendor link, not
+// the wallet, because the wallet was never ours to lose.
+//
+// `privateKey` is still generated on every session because the local mode has
+// to stay available: the flow console drives BOTH sides of a payment from one
+// browser, which no single wallet can do, and the demo has to run with no
+// extension installed. In metamask mode it is present and unused.
 
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 
@@ -21,10 +32,42 @@ export type PayeeSession = {
   walletId: string | null;
   /** Set once O7 completes, so P5 has something to prove continuity against. */
   enrolmentId: string | null;
+  /** Where the signing key lives. Absent on sessions stored before wallets. */
+  mode?: "local" | "metamask";
+  /** The connected account, in metamask mode. Null means not connected yet. */
+  address?: `0x${string}` | null;
 };
 
 function empty(): PayeeSession {
-  return { privateKey: generatePrivateKey(), vendorId: null, walletId: null, enrolmentId: null };
+  return {
+    privateKey: generatePrivateKey(),
+    vendorId: null,
+    walletId: null,
+    enrolmentId: null,
+    mode: "local",
+    address: null,
+  };
+}
+
+/**
+ * Which mode a stored session is in.
+ *
+ * Read through this rather than off the field: sessions written before wallet
+ * support have no `mode`, and defaulting those to "local" is what stops an
+ * existing half-finished onboarding breaking on the next page load.
+ */
+export function modeOf(session: PayeeSession): "local" | "metamask" {
+  return session.mode === "metamask" ? "metamask" : "local";
+}
+
+/**
+ * The payout address this session is onboarding, or null if it cannot be known
+ * yet. In metamask mode that is the connected account; a null means the person
+ * has not connected, and nothing that needs an address may proceed.
+ */
+export function addressOf(session: PayeeSession): `0x${string}` | null {
+  if (modeOf(session) === "metamask") return session.address ?? null;
+  return privateKeyToAccount(session.privateKey).address;
 }
 
 /**

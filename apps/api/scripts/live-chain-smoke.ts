@@ -192,7 +192,7 @@ async function main(): Promise<void> {
     // --- 7. the payee proves the address is theirs, and gets the secret -----
     console.log("\n6. POST /payments/:id/settlement/secret");
     const signature = await payee.signTypedData({
-      domain: domainFor(config.EIP712_CHAIN_ID),
+      domain: domainFor(config.HEDERA_CHAIN_ID),
       types: SECRET_RELEASE_TYPES,
       primaryType: "SecretRelease",
       message: buildSecretReleaseMessage({

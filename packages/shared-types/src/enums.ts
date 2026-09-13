@@ -104,7 +104,11 @@ export const SettlementMode = z.enum(["DIRECT", "HTLC"]);
 export type SettlementMode = z.infer<typeof SettlementMode>;
 
 /** Lifecycle of one escrow. CLAIMED and REFUNDED are mutually exclusive. */
-export const HtlcStatus = z.enum(["LOCKED", "CLAIMED", "REFUNDED"]);
+/**
+ * PENDING_LOCK means authorised but not yet funded — the payer's own wallet
+ * still has to send the transaction. Everything after it is on chain.
+ */
+export const HtlcStatus = z.enum(["PENDING_LOCK", "LOCKED", "CLAIMED", "REFUNDED"]);
 export type HtlcStatus = z.infer<typeof HtlcStatus>;
 
 /**

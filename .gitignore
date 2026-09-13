@@ -112,3 +112,9 @@ desktop.ini
 # large, they are not ours to redistribute, and nothing builds from them.
 docs/reference/*.pdf
 *.pdf
+
+# --- PITCH MATERIAL, not source ---
+# The deck prompt. Working material for a presentation, not part of the product,
+# and it carries claims that need checking against primary sources before anyone
+# repeats them.
+slides.txt

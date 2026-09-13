@@ -3,16 +3,314 @@
 /*
  * SecurTxn design tokens.
  *
- * ONE ACCENT, ON PURPOSE. This is a control layer in front of other people's
- * money, and the interface has to read as calm and deliberate rather than
- * energetic. Near-black surfaces, hairline borders, a single cool blue for
- * anything actionable, and one restrained green reserved exclusively for
- * "verified". Colour means something here; if it were decorative it would stop
- * meaning anything.
+ * THE MATERIAL IS MATTE BLACK WITH SOFT EXTRUSION. Surfaces are shades of
+ * charcoal that rise out of and sink into a single base plane, lit from one
+ * fixed direction, with a small set of saturated accents that never become
+ * surfaces themselves. It is a control layer in front of other people's money,
+ * so it has to read as calm and deliberate — the extrusion does the work that
+ * decoration would otherwise be asked to do.
+ *
+ * ONE ACCENT, ON PURPOSE. Colour means something here. Cyan is the only thing
+ * you can act on; green means verified, amber means a person is the blocker,
+ * coral means blocked, violet means the machine is working, and pink marks the
+ * one step you are on during onboarding. If any of them were decorative they
+ * would all stop meaning anything. `components/ui/status.ts` owns the mapping
+ * and no other file may name a status colour.
+ *
+ * WHY THE GROUND IS NOT BLACK. Extrusion needs a light shadow and a dark shadow
+ * to both have somewhere to go. On a near-black base the light shadow has no
+ * room and nothing can rise. So the app's base plane is charcoal, and raised
+ * surfaces are LIGHTER than it while recessed ones are darker. That relationship
+ * carries the hierarchy before any shadow is drawn, which is also the fallback
+ * for anyone who cannot perceive the shadows at all — see `[data-flat]` below.
+ *
+ * TWO ROOMS. The landing page is a different material: deep black, frosted
+ * glass, a WebGL prism. That is deliberate and it stays. Everything in this file
+ * is the PRODUCT's material, and `[data-surface="deep"]` restores the landing's
+ * values for its own subtree. The one thing shared across both is the accent, so
+ * the call to action is the same colour on the marketing page and in the app.
  *
  * Tailwind v4: the theme lives in CSS, there is no tailwind.config.js.
  */
 @theme {
+  /* ---------------------------------------------------------------- surfaces
+   * Six steps. Raised is lighter than the base, recessed is darker, and the gap
+   * between adjacent steps is large enough to survive an 8-bit panel without
+   * banding but small enough that two adjacent surfaces still read as the same
+   * material.
+   */
+  --color-ink-950: #0a0b0d; /* void — the gutter behind the app frame */
+  --color-ink-900: #121316; /* recessed — the bottom of a well, the rail */
+  --color-ink-850: #16181c; /* THE BASE PLANE. everything extrudes from this */
+  --color-ink-800: #1c1f24; /* raised — card and panel faces */
+  --color-ink-700: #23262d; /* high raised — dialog, popover, toast */
+  --color-ink-600: #2b2f37; /* hairlines, highlight shadow, disabled faces */
+
+  /* ------------------------------------------------------------------- text
+   * Contrast is computed against ink-800, the surface most text sits on.
+   * mist-500 is 3.2:1 and therefore legal only at large or bold sizes; mist-600
+   * carries no information at all, ever.
+   */
+  --color-mist-50: #f4f6fa; /* 15.8:1 — headline, the value a row is about */
+  --color-mist-100: #e4e8f0; /* 13.6:1 — hover and active text state */
+  --color-mist-200: #ced4e0; /* 11.0:1 — body default */
+  --color-mist-300: #aeb6c6; /*  7.8:1 — secondary inside a dense row */
+  --color-mist-400: #8a93a6; /*  5.2:1 — descriptions, leads */
+  --color-mist-500: #666e7e; /*  3.2:1 — metadata. LARGE OR MONO ONLY */
+  --color-mist-600: #464c58; /*  1.9:1 — disabled, placeholder, idle */
+
+  /* ----------------------------------------------------------------- accents
+   * The only interactive colour. Cyan rather than the old cornflower blue: on a
+   * matte charcoal ground a cooler, more saturated accent is what separates
+   * "premium" from "flat", and it is the one hue that still reads as a link.
+   */
+  --color-signal-300: #7fe6ff; /* accent text on matte */
+  --color-signal-400: #3dd8ff; /* primary action, focus, active nav */
+  --color-signal-500: #1fc2ee; /* primary fill, chart accent */
+  --color-signal-600: #0e9dc4; /* pressed */
+
+  /* Reserved for verified state. Never decorative. */
+  --color-verified-400: #3be8a0;
+
+  /* Reserved for the blocked/refused state. */
+  --color-halt-400: #ff6b6b;
+
+  /*
+   * Reserved for "waiting on a human".
+   *
+   * Deliberately NOT the same as running. Running means the machine is working
+   * and nobody can help it; this means the system is idle and a person is the
+   * blocker — DigiLocker consent, a Selfie Check, the payee's decision. It is
+   * the one state an operator can actually act on, so it gets its own colour
+   * and nothing else may use it.
+   */
+  --color-pending-400: #ffc24b;
+  --color-pending-500: #d99b1f;
+
+  /* The machine is working. Distinct from waiting, for the reason above. */
+  --color-running-400: #8b7bff;
+
+  /*
+   * The single active step during onboarding, and nothing else.
+   *
+   * It appears once per screen, at 28px, on the one row you are being asked to
+   * act on. Spending a whole hue on one dot is what makes "you are here"
+   * unmissable without an arrow or an animation pointing at it.
+   */
+  --color-stage-400: #ff6fa5;
+
+  /*
+   * Elevation by role rather than by number, so a panel cannot drift to a
+   * different grey in one file. Consumed by the `panel` and `well` utilities.
+   */
+  --color-ink-panel: #1c1f24;
+  --color-ink-well: #121316;
+
+  /*
+   * The hairlines, again, as COLOURS.
+   *
+   * `hairline` and friends below are whole-border utilities, which is what a
+   * resting edge wants. But a hover state or a conditional swap changes only the
+   * border-COLOUR on an element that already has a border, and reapplying the
+   * full shorthand there would fight the width and style. These give
+   * `border-hairline-active`, `hover:border-hairline-active` and so on, which
+   * compose with variants the way every other Tailwind colour does.
+   *
+   * Tinted toward the surface rather than pure white, so an edge does not read
+   * cool against ink-800 and warm against ink-900.
+   */
+  --color-hairline: color-mix(in oklab, var(--color-ink-600) 55%, transparent);
+  --color-hairline-strong: color-mix(in oklab, var(--color-ink-600) 85%, transparent);
+  --color-hairline-active: color-mix(in oklab, var(--color-signal-400) 35%, transparent);
+
+  /* -------------------------------------------------------------- typography
+   * Nine steps, replacing seventeen ad-hoc arbitrary sizes. Line heights are
+   * the nearest integer px to a target ratio — about 1.4 on body and 1.15 on
+   * display — rather than multiples of four, which goes loose at the top.
+   *
+   * 13px is the body default, not 14: the densest artefact in this app is a
+   * six-column table row, and 14 forces either a 60px row or truncation.
+   *
+   * Negative tracking only at 16px and up. Below that it closes the counters on
+   * the letters that matter most when scanning an identifier.
+   */
+  --text-micro: 10px;
+  --text-micro--line-height: 14px;
+  --text-micro--letter-spacing: 0.14em;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+
+  --text-lg: 16px;
+  --text-lg--line-height: 22px;
+  --text-lg--letter-spacing: -0.01em;
+
+  --text-xl: 20px;
+  --text-xl--line-height: 26px;
+  --text-xl--letter-spacing: -0.02em;
+
+  --text-2xl: 26px;
+  --text-2xl--line-height: 30px;
+  --text-2xl--letter-spacing: -0.03em;
+
+  /* The single hero figure. Escrow screen only — it is the one number in the
+     product that is true without aggregating anything. */
+  --text-3xl: 34px;
+  --text-3xl--line-height: 38px;
+  --text-3xl--letter-spacing: -0.03em;
+
+  --tracking-micro: 0.14em;
+  --tracking-wide: 0.16em;
+  --tracking-pill: 0.08em;
+
+  /* ------------------------------------------------------------------ radius
+   * Softer than a flat UI would need. A 4px corner under a 20px shadow spread
+   * reads as a sticker rather than an object.
+   *
+   * Two rules keep this from drifting. Radius never exceeds the container's own
+   * padding. And nesting is concentric: inner = outer − padding, rounded DOWN
+   * to the nearest step.
+   *
+   * Nothing in the product is a full-radius rectangle. That is landing-page
+   * language and it makes a 40px control read as a chip.
+   */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 14px; /* workhorse: buttons, inputs, nav links, toast */
+  --radius-lg: 20px; /* panel and card */
+  --radius-xl: 28px; /* dialog, palette, popover */
+  --radius-2xl: 36px; /* the app frame, one hero container per screen */
+
+  /* ------------------------------------------------------------------ motion
+   * One easing per intent. The rule is: enter slow-to-a-stop, leave fast. Using
+   * the same curve both ways is the commonest reason an interface feels
+   * sluggish, because on an EXIT a decelerating curve leaves the element
+   * loitering at ninety-five percent of the way gone.
+   */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1); /* entrances */
+  --ease-in-quint: cubic-bezier(0.64, 0, 0.78, 0); /* exits */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1); /* enters and exits in place */
+  --ease-overshoot: cubic-bezier(0.34, 1.56, 0.64, 1); /* toast, palette, badge */
+
+  --dur-instant: 90ms; /* colour only. 180 visibly trails a scrubbing cursor */
+  --dur-press: 140ms; /* THE SHADOW MORPH. see below */
+  --dur-fast: 180ms;
+  --dur-base: 320ms;
+  --dur-slow: 480ms; /* anything travelling more than 200px */
+
+  --font-sans:
+    var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+/*
+ * Neumorphic elevation.
+ *
+ * ONE LIGHT SOURCE, TOP-LEFT, FOREVER. A soft-UI screen with two light sources
+ * is the single most common way this style goes wrong, and it is invisible
+ * until you see two objects next to each other disagreeing about where the lamp
+ * is. No shadow may animate its DIRECTION, only its depth.
+ *
+ * The highlight is never pure white at high alpha. On matte charcoal that reads
+ * as cheap plastic; a barely-there lift reads as machined metal.
+ *
+ * SPREAD BUDGET. `--shadow-neu-3` needs 20px of clear space bottom-right and
+ * 14px top-left, which is why grid gaps between raised cards start at 24, and
+ * why nothing smaller than 40px square may carry it — the shadow would be
+ * larger than the object.
+ *
+ * These live outside `@theme` as plain custom properties AND inside it as
+ * `--shadow-*` so both `shadow-neu-2` and `var(--neu-2)` work; utilities that
+ * compose a shadow with a rim need the raw value.
+ */
+@theme {
+  --shadow-neu-1: -2px -2px 4px var(--neu-hi), 2px 2px 5px var(--neu-lo);
+  --shadow-neu-2: -3px -3px 7px var(--neu-hi), 4px 4px 10px var(--neu-lo);
+  --shadow-neu-3: -6px -6px 14px var(--neu-hi), 8px 8px 20px var(--neu-lo);
+  --shadow-neu-4: -10px -10px 28px var(--neu-hi), 16px 16px 44px var(--neu-lo);
+  --shadow-neu-in-1: inset 2px 2px 5px var(--neu-lo), inset -2px -2px 4px var(--neu-hi);
+  --shadow-neu-in-2: inset 4px 4px 10px var(--neu-lo), inset -3px -3px 7px var(--neu-hi);
+}
+
+:root {
+  --neu-hi: rgb(255 255 255 / 0.035);
+  --neu-lo: rgb(0 0 0 / 0.55);
+  --neu-rim: inset 0 1px 0 0 rgb(255 255 255 / 0.045);
+
+  /*
+   * Glow — what makes an accent punchy rather than merely coloured.
+   *
+   * ONLY A SURFACE THAT IS ITSELF ACCENT-FILLED MAY GLOW. A glow with no light
+   * source is fog. In practice that is the primary button, the active step dot,
+   * the one highlighted chart mark, and the focus ring. Nothing else.
+   */
+  --glow-signal:
+    0 0 20px -2px rgb(31 194 238 / 0.45), 0 0 48px -8px rgb(31 194 238 / 0.25);
+  --glow-verified: 0 0 20px -2px rgb(59 232 160 / 0.4);
+  --glow-halt: 0 0 20px -2px rgb(255 107 107 / 0.4);
+  --glow-pending: 0 0 20px -2px rgb(255 194 75 / 0.35);
+  --glow-stage: 0 0 24px -2px rgb(255 111 165 / 0.5);
+
+  /*
+   * Hairlines. Extrusion cannot separate a table row from the next one — there
+   * is no room for a shadow at 56px — so rules still do that job. Three values,
+   * absorbing the ten different inline alphas that were in use.
+   *
+   * Tinted toward the surface rather than pure white, so a hairline does not
+   * read cool against ink-800 and warm against ink-900.
+   */
+  --hairline: var(--color-hairline);
+  --hairline-strong: var(--color-hairline-strong);
+  --hairline-active: var(--color-hairline-active);
+
+  /* Background washes, absorbing eleven inline alphas. */
+  --wash-1: rgb(255 255 255 / 0.02); /* idle row tint, skeleton base */
+  --wash-2: rgb(255 255 255 / 0.04); /* row hover, ghost rest */
+  --wash-3: rgb(255 255 255 / 0.07); /* pressed, ghost hover */
+
+  /*
+   * Stacking. Gaps of ten so a layer can be inserted without renumbering.
+   *
+   * This is load-bearing rather than tidy: Radix portals to document.body, so
+   * the DOM order that the old hand-rolled z-50 relied on stops being a
+   * reliable predictor the moment a dropdown exists.
+   */
+  --z-backdrop: -10;
+  --z-base: 0;
+  --z-raised: 10; /* sticky table header */
+  --z-sticky: 20; /* app top bar */
+  --z-nav: 30; /* sidebar rail */
+  --z-overlay: 40; /* scrims */
+  --z-drawer: 50;
+  --z-popover: 60;
+  --z-dialog: 70;
+  --z-toast: 80;
+  --z-tooltip: 90; /* must win over everything, including a toast */
+}
+
+/*
+ * The landing page's material, restored for its own subtree.
+ *
+ * Set by `app/page.tsx` on a `display: contents` wrapper, so it carries the
+ * custom properties without existing as a box. Deep black, the original
+ * cornflower-adjacent surfaces, and Tailwind's default type scale — the
+ * marketing page was designed against all three and this file must not move it.
+ *
+ * The ACCENT is deliberately not restored. One call-to-action colour across the
+ * marketing page and the product is the continuity worth keeping; two different
+ * blues either side of the sign-in button is not.
+ */
+[data-surface="deep"] {
   --color-ink-950: #050609;
   --color-ink-900: #080a0f;
   --color-ink-850: #0b0e14;
@@ -25,22 +323,34 @@
   --color-mist-500: #6f7889;
   --color-mist-600: #545c6b;
 
-  /* The one interactive colour. */
-  --color-signal-300: #a8c5ff;
-  --color-signal-400: #7ea6ff;
-  --color-signal-500: #5b8cff;
-  --color-signal-600: #3f6fe0;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 18px;
+  --text-lg--line-height: 28px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 36px;
+  --text-lg--letter-spacing: 0;
+  --text-xl--letter-spacing: 0;
+  --text-2xl--letter-spacing: 0;
+  --text-3xl--letter-spacing: 0;
 
-  /* Reserved for verified state. Never decorative. */
-  --color-verified-400: #5bd6a0;
-
-  /* Reserved for the blocked/refused state. */
-  --color-halt-400: #ff7a6b;
-
-  --font-sans:
-    var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono:
-    ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, monospace;
+  /* The product's radii are built for extrusion — a 4px corner under a 20px
+     shadow spread reads as a sticker. The marketing page has no extrusion and
+     was drawn against the stock ramp, so it keeps it. Without this, its
+     `rounded-2xl` cards would jump to 36px while `rounded-3xl` stayed at 24 and
+     the ramp would invert. */
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
 }
 
 @layer base {
@@ -65,24 +375,130 @@
     letter-spacing: -0.03em;
   }
 
+  /*
+   * Every monetary figure is mono and tabular.
+   *
+   * A settlement amount set in a proportional sans on a matte ground is the
+   * detail that gives away a hobby project, and non-tabular digits make two
+   * stacked amounts impossible to compare by eye because the columns do not
+   * line up. Applied here so no row has to remember.
+   */
+  [data-numeric] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
   ::selection {
     background: var(--color-signal-500);
     color: var(--color-ink-950);
   }
 
-  /* Every focus ring is visible. An operator who cannot see where they are is
-     an operator who approves the wrong row. */
+  /*
+   * Anything you can click says so.
+   *
+   * Tailwind v4 dropped the `button { cursor: pointer }` that v3's preflight
+   * added, so buttons now inherit the browser's arrow — which on a screen made
+   * almost entirely of buttons reads as though nothing on it is interactive.
+   *
+   * Declared here rather than as a utility on each component so it also covers
+   * anything added later, and so nobody has to remember it.
+   */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  /* Both shapes of label: one pointing at a control by id, and one wrapping
+     it. Clicking either toggles the control, so both are clickable. */
+  label[for],
+  label:has(input:not(:disabled), select:not(:disabled), textarea:not(:disabled)),
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="range"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* And anything you cannot click says that too, rather than staying silent. */
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  select:disabled,
+  input:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
+  }
+
+  /*
+   * Every focus ring is visible. An operator who cannot see where they are is
+   * an operator who approves the wrong row.
+   *
+   * It glows, and it never animates. A focus ring that fades in is a focus ring
+   * that is absent for the first frames of every keyboard move.
+   */
   :focus-visible {
     outline: 2px solid var(--color-signal-400);
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
+    box-shadow: var(--glow-signal);
+  }
+
+  /*
+   * Touch does not get a hover wash it cannot dismiss, and taps do not flash a
+   * platform highlight over a surface that already has a pressed state.
+   */
+  @media (hover: none) {
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+  }
+
+  /*
+   * EXTRUSION CARRIES AFFORDANCE, NEVER MEANING.
+   *
+   * Soft UI's known failure is a borderless raised button that relies entirely
+   * on shadows, which plenty of people cannot perceive and which disappear on a
+   * dim or low-quality panel. Every piece of information here must survive the
+   * shadows being deleted — the surface ramp already encodes the hierarchy by
+   * lightness, status is carried by a colour AND the StepGlyph silhouette, and
+   * focus is an outline rather than a shadow.
+   *
+   * `[data-flat]` on the html element proves it: it strips every box-shadow in
+   * the document. Development only, toggled from the kitchen-sink route. If a
+   * screen becomes unusable or ambiguous with it on, that screen has a bug.
+   */
+  [data-flat] * {
+    box-shadow: none !important;
   }
 
   /* The hero and the glitch panel both animate continuously. Anyone who has
-     asked their OS to stop that gets a still page, not a slower one. */
+     asked their OS to stop that gets a still page, not a slower one.
+
+     NOTE. This deliberately does NOT set `transition-duration: 0.01ms` on `*`.
+     It used to, and that is a trap: Radix unmounts a dialog, drawer or popover
+     when its exit TRANSITION fires `transitionend`. A blanket override on every
+     element — including ones Radix did not author — can suppress that event, and
+     the component then stays mounted forever with `pointer-events: none` on the
+     page behind it. The failure lands on people who asked for reduced motion,
+     i.e. the ones least likely to be in a test pass.
+
+     Collapsing the duration TOKENS instead gets the same stillness: everything
+     we author reads its duration from one of these, so it all goes to 1ms, while
+     Radix's own presence machinery still fires and unmounts cleanly. Anything
+     that must swap a PROPERTY rather than a duration (transform → opacity) uses
+     an explicit `motion-reduce:` variant at the site.
+
+     `animation-*` keeps the blanket override. Those are the landing page's
+     perpetual effects, nothing unmounts on them, and stopping them is the point. */
   @media (prefers-reduced-motion: reduce) {
     html {
       scroll-behavior: auto;
+    }
+
+    :root {
+      --dur-instant: 1ms;
+      --dur-press: 1ms;
+      --dur-fast: 1ms;
+      --dur-base: 1ms;
+      --dur-slow: 1ms;
     }
 
     *,
@@ -90,17 +506,72 @@
     *::after {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
     }
   }
 }
 
+/* ---------------------------------------------------------------- utilities */
+
 @utility hairline {
-  border: 1px solid color-mix(in oklab, var(--color-mist-400) 14%, transparent);
+  border: 1px solid var(--hairline);
 }
 
-/* The faint grid behind the darker sections. Structure, not decoration: it
-   gives the eye something to measure the spacing against. */
+@utility hairline-strong {
+  border: 1px solid var(--hairline-strong);
+}
+
+@utility hairline-t {
+  border-top: 1px solid var(--hairline);
+}
+
+@utility hairline-b {
+  border-bottom: 1px solid var(--hairline);
+}
+
+@utility hairline-l {
+  border-left: 1px solid var(--hairline);
+}
+
+@utility hairline-r {
+  border-right: 1px solid var(--hairline);
+}
+
+/* For `divide-y` contexts, where a border on each child is wrong. */
+@utility divide-hairline {
+  border-color: var(--hairline);
+}
+
+/* The elevation levels as materials, shadow plus the lit top rim together. A
+   raised surface without the rim reads as a shadow under a flat rectangle. */
+@utility neu-1 {
+  box-shadow: var(--shadow-neu-1), var(--neu-rim);
+}
+
+@utility neu-2 {
+  box-shadow: var(--shadow-neu-2), var(--neu-rim);
+}
+
+@utility neu-3 {
+  box-shadow: var(--shadow-neu-3), var(--neu-rim);
+}
+
+@utility neu-4 {
+  box-shadow: var(--shadow-neu-4), var(--neu-rim);
+}
+
+@utility neu-in-1 {
+  box-shadow: var(--shadow-neu-in-1);
+}
+
+@utility neu-in-2 {
+  box-shadow: var(--shadow-neu-in-2);
+}
+
+/* The faint grid behind the landing page's darker sections. Structure, not
+   decoration: it gives the eye something to measure the spacing against.
+
+   NOT USED IN THE PRODUCT. A grid texture underneath extruded objects is a
+   second depth system arguing with the first. */
 @utility grid-veil {
   background-image:
     linear-gradient(
@@ -114,4 +585,98 @@
       transparent 1px
     );
   background-size: 72px 72px;
+}
+
+/*
+ * The standard app surface: raised out of the base plane. One definition, so a
+ * panel cannot drift.
+ *
+ * A PANEL MAY NOT CONTAIN A PANEL. Two extrusions deep is the maximum before
+ * soft UI turns to mush. A box inside a box is a `well`, or a section separated
+ * by a hairline with a label on it.
+ */
+@utility panel {
+  background-color: var(--color-ink-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-neu-3), var(--neu-rim);
+}
+
+/*
+ * Recessed INTO a panel: JSON drawers, inputs, code, chart plot areas, progress
+ * tracks. May only exist inside a panel — a hole has to be a hole in something.
+ */
+@utility well {
+  background-color: var(--color-ink-well);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-neu-in-2);
+}
+
+/*
+ * The product ground.
+ *
+ * The base plane plus one very soft cool bloom in the top-left corner, agreeing
+ * with the light source. Static — no canvas, no animation loop. The landing page
+ * can afford a hundred-step raymarch; a screen someone reads a settlement off
+ * cannot justify the battery, and a moving background behind changing numbers
+ * makes the numbers harder to read, not easier.
+ */
+@utility ground {
+  background-color: var(--color-ink-850);
+  background-image: radial-gradient(
+    ellipse 70% 45% at 12% -5%,
+    color-mix(in oklab, var(--color-signal-500) 4%, transparent) 0%,
+    transparent 62%
+  );
+}
+
+/*
+ * Where shadows are the only depth cue available, replace them with borders
+ * rather than leaving the surfaces flat and indistinguishable.
+ *
+ * UNLAYERED AND LAST, deliberately. `@utility` emits into Tailwind's utilities
+ * layer, so the same rule written inside `@layer base` would lose to `panel` on
+ * every element that has it. Unlayered CSS outranks every layer, which is the
+ * only way an accessibility override reliably beats the thing it is overriding.
+ */
+@media (forced-colors: active), (prefers-contrast: more) {
+  .panel,
+  .well,
+  .ground,
+  .neu-1,
+  .neu-2,
+  .neu-3,
+  .neu-4,
+  .neu-in-1,
+  .neu-in-2 {
+    box-shadow: none;
+    border: 1px solid var(--hairline-strong);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * The skeleton.
+ *
+ * A recess that breathes, not a white gradient sweeping left to right. A light
+ * sweep across a matte surface implies a moving light source, which contradicts
+ * the one rule this whole material depends on — and it is the visual tell of a
+ * template.
+ */
+@keyframes recess-breathe {
+  0%,
+  100% {
+    box-shadow: inset 2px 2px 5px rgb(0 0 0 / 0.35), inset -2px -2px 4px var(--neu-hi);
+  }
+  50% {
+    box-shadow: inset 3px 3px 7px rgb(0 0 0 / 0.55), inset -2px -2px 4px var(--neu-hi);
+  }
 }

@@ -10,13 +10,13 @@ import { useCallback, useEffect, useRef } from "react";
 
 interface CountUpProps {
   to: number;
-  from?: number;
-  direction?: "up" | "down";
-  delay?: number;
-  duration?: number;
-  className?: string;
-  startWhen?: boolean;
-  separator?: string;
+  from?: number | undefined;
+  direction?: "up" | "down" | undefined;
+  delay?: number | undefined;
+  duration?: number | undefined;
+  className?: string | undefined;
+  startWhen?: boolean | undefined;
+  separator?: string | undefined;
   onStart?: () => void;
   onEnd?: () => void;
 }

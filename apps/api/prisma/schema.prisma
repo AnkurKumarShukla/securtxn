@@ -71,6 +71,16 @@ enum SettlementMode {
 /// One escrow's lifecycle. CLAIMED and REFUNDED are mutually exclusive on
 /// chain — the contract closes claiming the moment the timelock passes.
 enum HtlcStatus {
+  /// Authorised and prepared, but the money has not moved yet.
+  ///
+  /// Exists because the PAYER funds the escrow from their own wallet. The
+  /// platform generates the secret and fixes every lock parameter at approval
+  /// time — it must, because the preimage cannot be handed to the payer without
+  /// handing them the escrow — but it cannot broadcast, since it does not hold
+  /// their key. So the settlement is real before it is on chain: this row IS
+  /// the instruction the payer's wallet is asked to execute, and the lock id
+  /// computed here is what their transaction is checked against.
+  PENDING_LOCK
   LOCKED
   CLAIMED
   REFUNDED
@@ -594,7 +604,8 @@ model HtlcSettlement {
 
   status HtlcStatus @default(LOCKED)
 
-  lockTxHash   String
+  /// Null while PENDING_LOCK: there is no transaction until the payer sends one.
+  lockTxHash   String?
   claimTxHash  String?
   refundTxHash String?
   /// Set on claim. Public by then, and it is the receipt itself.

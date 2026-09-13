@@ -33,7 +33,7 @@ let app: FastifyInstance;
 let payerId: string;
 let token: string;
 const vendorIds: string[] = [];
-const CHAIN_ID = base.EIP712_CHAIN_ID;
+const CHAIN_ID = base.HEDERA_CHAIN_ID;
 const auth = () => ({ authorization: `Bearer ${token}` });
 
 beforeAll(async () => {

@@ -8,11 +8,13 @@ import { FadedRule, GhostButton, PrimaryButton } from "./primitives";
 const COLUMNS = [
   {
     heading: "Product",
+    // Every one of these used to be an API prefix proxied away from Next by
+    // next.config.mjs, so none of them reached a page. The product is one
+    // dashboard with two sides.
     links: [
-      { label: "Payments", href: "/payments" },
-      { label: "Approvals", href: "/approvals" },
-      { label: "Evidence", href: "/evidence" },
-      { label: "Exceptions", href: "/exceptions" },
+      { label: "Dashboard", href: "/app" },
+      { label: "Send a payment", href: "/app/payments" },
+      { label: "Receive a payment", href: "/app/inbox" },
     ],
   },
   {
@@ -50,7 +52,7 @@ export function Footer() {
               when nobody claims it.
             </p>
             <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
-              <PrimaryButton href="/payments">Launch App</PrimaryButton>
+              <PrimaryButton href="/app">Launch App</PrimaryButton>
               <GhostButton href="#how">See how it works</GhostButton>
             </div>
           </div>

@@ -38,7 +38,7 @@ export default function WorldIdTestPage() {
     try {
       const res = await fetch("/api/world-id/rp-signature", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "ngrok-skip-browser-warning": "1" },
         body: JSON.stringify({ action: WORLD_ACTION }),
       });
       const sig = await res.json();
@@ -64,7 +64,7 @@ export default function WorldIdTestPage() {
     setStage("verifying");
     const res = await fetch("/api/world-id/verify", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "ngrok-skip-browser-warning": "1" },
       body: JSON.stringify(proof),
     });
     const body = await res.json();

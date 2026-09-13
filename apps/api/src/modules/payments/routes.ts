@@ -6,6 +6,8 @@ import {
   AcknowledgmentResponse,
   CreatePaymentRequest,
   DecisionResult,
+  PaymentList,
+  PaymentListQuery,
   PaymentSummary,
   RecordClaimRequest,
   RecordLockRequest,
@@ -55,6 +57,26 @@ export const paymentRoutes: FastifyPluginAsyncZod = async (app) => {
     matcherKind: app.config.VENDOR_MATCHER,
     config: app.config,
   });
+
+  app.get(
+    "/payments",
+    {
+      preHandler: app.requireRole("agent"),
+      schema: {
+        tags: ["payments"],
+        summary: "List payments",
+        description:
+          "Resolves the payee's display name at read time rather than storing it on " +
+          "the row, so a renamed vendor does not leave stale names across history. " +
+          "Keyset paged on (createdAt, id): payments are raised while the list is " +
+          "being read, and an offset page would silently drop or repeat one.",
+        security: [{ bearerAuth: [] }],
+        querystring: PaymentListQuery,
+        response: { 200: PaymentList },
+      },
+    },
+    async (request) => service.list(request.query),
+  );
 
   app.post(
     "/payments",

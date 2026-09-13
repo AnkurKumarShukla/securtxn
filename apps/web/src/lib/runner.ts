@@ -7,6 +7,7 @@
 
 import { IDENTITY_BINDING_TYPES, WALLET_CONTROL_TYPES, domainFor, CONTROL_STATEMENT } from "@cp/shared-types";
 
+import { pollConsent } from "./digilocker";
 import { api, messageOf, type ApiCall, type StepId } from "./flow";
 
 /** Everything the run accumulates. Shown in the sidebar so nothing is hidden. */
@@ -113,7 +114,11 @@ export type StepResult = { request?: unknown; response: unknown; status?: number
  * before the step finishes, because the step does not finish until a human has
  * used that URL. Returning it at the end would be too late to be useful.
  */
-export type Report = (patch: { note?: string; prompt?: string }) => void;
+export type Report = (patch: {
+  note?: string;
+  prompt?: string;
+  consentDeadline?: number;
+}) => void;
 
 type Runner = (ctx: RunContext, report: Report) => Promise<StepResult>;
 
@@ -158,22 +163,19 @@ async function digilocker(
     window.open(session.authorizationUrl, "_blank", "noopener");
   }
 
-  // Poll rather than trusting the redirect: the consent is a fact on
-  // DigiLocker's side, and a query parameter on a callback URL is not evidence
-  // of it.
-  const deadline = Date.now() + 5 * 60_000;
-  let status = "created";
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const poll = await api(`/vendors/${vendorId}/identity/status`, { token: ctx.token });
-    if (!poll.ok) continue;
-    status = (poll.body as { status: string }).status;
-    if (status === "succeeded") break;
-    if (status === "failed" || status === "expired") {
-      throw new StepError(`DigiLocker session ${status} — start the identity step again`);
-    }
+  // Polls rather than trusting the redirect — see lib/digilocker.ts. The
+  // deadline is reported so the console can show a countdown against the same
+  // budget this loop enforces, instead of a spinner that could mean anything.
+  const outcome = await pollConsent({
+    vendorId,
+    token: ctx.token,
+    onDeadline: (deadline) => report({ consentDeadline: deadline }),
+  });
+
+  if (outcome === "failed" || outcome === "expired") {
+    throw new StepError(`DigiLocker session ${outcome} — start the identity step again`);
   }
-  if (status !== "succeeded") {
+  if (outcome === "timeout") {
     throw new StepError(
       "timed out after 5 minutes waiting for DigiLocker consent — the tab may still be open",
     );

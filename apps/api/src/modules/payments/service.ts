@@ -15,6 +15,8 @@ import type {
   AcknowledgmentResponse,
   CreatePaymentRequest,
   DecisionResult,
+  PaymentList,
+  PaymentListQuery,
   PaymentSummary,
 } from "@cp/shared-types";
 import { ConflictError, NotFoundError, UnprocessableError } from "../../lib/errors.js";
@@ -329,7 +331,7 @@ export class PaymentService {
     const commitment = commitmentOver(input.acknowledgedContext);
 
     const valid = await verifyAcknowledgment({
-      chainId: this.deps.config.EIP712_CHAIN_ID,
+      chainId: this.deps.config.HEDERA_CHAIN_ID,
       address: input.recipientAddress,
       signature: input.recipientSignature,
       message: buildAcknowledgmentMessage({
@@ -387,6 +389,66 @@ export class PaymentService {
       recipientAddress: record.recipientAddress as AcknowledgmentResponse["recipientAddress"],
       recipientCommitment: record.recipientCommitment as AcknowledgmentResponse["recipientCommitment"],
       verifiedAt: record.verifiedAt.toISOString(),
+    };
+  }
+
+
+  /**
+   * The payments list.
+   *
+   * The payee's NAME is joined in here rather than left as a uuid. A list of
+   * sixteen-character identifiers answers none of the questions a person opens
+   * this screen with, and resolving the name at read time (rather than copying
+   * it onto the row at creation) means a renamed vendor does not leave stale
+   * names scattered across history.
+   *
+   * Keyset paging on (createdAt, id) for the same reason as the vendor
+   * directory: payments are raised while the list is being read, and an offset
+   * page would drop or repeat one.
+   */
+  async list(query: PaymentListQuery): Promise<PaymentList> {
+    const where: Prisma.PaymentRequestWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.payerVendorId ? { payerVendorId: query.payerVendorId } : {}),
+      ...(query.vendorId ? { vendorId: query.vendorId } : {}),
+    };
+
+    const rows = await this.deps.prisma.paymentRequest.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: query.limit + 1,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+      include: {
+        vendor: {
+          select: { legalEntityName: true, legalFirstName: true, legalLastName: true },
+        },
+      },
+    });
+
+    const hasMore = rows.length > query.limit;
+    const page = hasMore ? rows.slice(0, query.limit) : rows;
+
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        invoiceRef: row.invoiceRef,
+        amount: row.amount.toString(),
+        token: row.token,
+        network: row.network as PaymentList["items"][number]["network"],
+        status: row.status,
+        settlementMode: row.settlementMode,
+        decision: row.decision,
+        decisionReasonCode: row.decisionReasonCode,
+        payeeName:
+          row.vendor.legalEntityName ??
+          [row.vendor.legalFirstName, row.vendor.legalLastName].filter(Boolean).join(" ") ??
+          null,
+        payeeVendorId: row.vendorId,
+        payerVendorId: row.payerVendorId,
+        txHash: row.txHash,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
     };
   }
 

@@ -29,8 +29,23 @@ const API_PREFIXES = [
 
 const API_ORIGIN = process.env.API_ORIGIN ?? "http://127.0.0.1:3000";
 
+/**
+ * Hosts allowed to reach the dev server from another origin.
+ *
+ * Next 15 refuses cross-origin dev requests unless the host is listed, which is
+ * exactly what a tunnel is: the browser asks for the ngrok hostname, and its
+ * requests for /_next/* arrive with that Origin. Without this the page loads
+ * and every chunk after it fails, which reads as a blank screen rather than as
+ * a configuration problem.
+ *
+ * Set `TUNNEL_HOST` to the tunnel's hostname, no scheme. Only ever a dev
+ * concern — a production build serves its own assets.
+ */
+const TUNNEL_HOST = process.env.TUNNEL_HOST;
+
 export default {
   reactStrictMode: true,
+  ...(TUNNEL_HOST ? { allowedDevOrigins: [TUNNEL_HOST] } : {}),
   // No PII may reach the client bundle. Only NEXT_PUBLIC_* is exposed, and the
   // only public value this app needs is the World App id (§4.6).
 
@@ -55,6 +70,12 @@ export default {
     // Those pages are all `return null` placeholders, so nothing is lost by
     // giving the API the prefix. If one of them is ever built out, it needs a
     // path that does not collide with the API.
+    //
+    // THAT IS WHY THE DASHBOARD IS AT /app. It was going to be /payments — the
+    // landing page's "Launch App" pointed there — and it would have rendered
+    // the API's JSON with no error anywhere. Adding any prefix beginning with
+    // "app" to the list above would take the whole dashboard down the same
+    // silent way.
     return { beforeFiles: proxied };
   },
 

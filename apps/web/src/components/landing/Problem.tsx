@@ -115,7 +115,7 @@ function Stat({
   label,
 }: {
   value: React.ReactNode;
-  suffix?: string;
+  suffix?: string | undefined;
   label: string;
 }) {
   return (

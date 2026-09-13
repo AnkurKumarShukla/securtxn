@@ -236,3 +236,89 @@ export const CallbackChannelsResponse = z.object({
   ),
 });
 export type CallbackChannelsResponse = z.infer<typeof CallbackChannelsResponse>;
+
+/**
+ * GET /vendors — the payee directory.
+ *
+ * Deliberately NARROWER than `VendorSummary`: a directory is browsed, and a
+ * browsable list of counterparties is the wrong place to spray identity
+ * details. `aadhaarLast4` and the document-check booleans are on the detail
+ * endpoint, which is read one vendor at a time and deliberately.
+ *
+ * `walletStatus` is the one thing added, because it is what decides whether a
+ * vendor can be paid at all, and today the only way to learn it is a second
+ * request per row.
+ */
+export const VendorListItem = z.object({
+  id: Uuid,
+  displayName: z.string(),
+  payeeType: PayeeType,
+  country: CountryCode,
+  kybStatus: KybStatus,
+  verificationTier: VerificationTier,
+  /** The status of their most recent wallet, or null when they have none. */
+  walletStatus: WalletStatus.nullable(),
+  /** Their payout address, only once a wallet is CONFIRMED. */
+  payoutAddress: EvmAddress.nullable(),
+  createdAt: z.string().datetime(),
+});
+export type VendorListItem = z.infer<typeof VendorListItem>;
+
+export const VendorListQuery = z.object({
+  /** Case-insensitive match on the display name. */
+  q: z.string().max(200).optional(),
+  verificationTier: VerificationTier.optional(),
+  /** Only vendors that can actually receive a payment today. */
+  payableOnly: z.coerce.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: Uuid.optional(),
+});
+export type VendorListQuery = z.infer<typeof VendorListQuery>;
+
+export const VendorList = z.object({
+  items: z.array(VendorListItem),
+  nextCursor: Uuid.nullable(),
+});
+export type VendorList = z.infer<typeof VendorList>;
+
+/**
+ * GET /vendors/by-address/:address
+ *
+ * WHY THIS EXISTS. Everything a returning payee needs is already in the
+ * database — the vendor row, its verification tier, the confirmed wallet, the
+ * World ID enrolment. What the browser used to hold was the only POINTER to it:
+ * a vendorId in localStorage. Clearing site data therefore orphaned a finished
+ * onboarding, and the person redid a DigiLocker consent for a record that
+ * already existed.
+ *
+ * A connected wallet is a better pointer than a browser, because it is the same
+ * pointer on every device. This is the lookup that turns it into one.
+ *
+ * Deliberately NOT the identity: no Aadhaar digits, no document checks, no
+ * legal name beyond the display name that `GET /vendors` already lists. It
+ * answers "which onboarding does this address belong to, and how far did it
+ * get" and nothing more, because it is reachable with any agent token.
+ */
+export const VendorByAddress = z.object({
+  vendorId: Uuid,
+  displayName: z.string(),
+  verificationTier: VerificationTier,
+  /** Past TIER0, i.e. DigiLocker has been completed and has not expired. */
+  identityVerified: z.boolean(),
+  /** Verification expires; a restored session must not claim otherwise (D06). */
+  aadhaarKycTtl: z.string().datetime().nullable(),
+  /** The wallet this address is registered as, at its most recent version. */
+  walletId: Uuid,
+  walletStatus: WalletStatus,
+  /** The address as stored, so a caller can see what actually matched. */
+  address: z.string(),
+  network: Network,
+  /**
+   * The World ID enrolment for this vendor, when one exists.
+   *
+   * Restored alongside the rest so O7 is not repeated. Null is not an error —
+   * enrolment is a separate step and may simply not have happened yet.
+   */
+  enrolmentId: Uuid.nullable(),
+});
+export type VendorByAddress = z.infer<typeof VendorByAddress>;

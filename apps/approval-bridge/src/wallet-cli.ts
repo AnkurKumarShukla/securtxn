@@ -8,7 +8,7 @@
 //   mock       device-style confirmation, synthetic tx hash, no key anywhere.
 //              The default and the CI path.
 //   local      encrypted keystore on this machine, password prompted at approve
-//              time, real Sepolia broadcast.
+//              time, real broadcast to Hedera testnet over the JSON-RPC relay.
 //   usb        physical Ledger via @ledgerhq/wallet-cli — declared, 501.
 //   speculos   Ledger emulator — declared, 501.
 //
@@ -123,8 +123,8 @@ export class LocalKeystoreTransport implements SigningTransport {
     if (!this.config.KEYSTORE_PATH) {
       throw new Error("KEYSTORE_PATH is not set; the local transport has no key to use");
     }
-    if (!this.config.SEPOLIA_RPC_URL) {
-      throw new Error("SEPOLIA_RPC_URL is not set; the local transport cannot broadcast");
+    if (!this.config.HEDERA_JSON_RPC_URL) {
+      throw new Error("HEDERA_JSON_RPC_URL is not set; the local transport cannot broadcast");
     }
 
     const password = await this.promptPassword();

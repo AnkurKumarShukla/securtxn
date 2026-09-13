@@ -69,7 +69,7 @@ beforeAll(async () => {
   };
   app = await buildServer(config);
   await app.ready();
-  chainId = config.EIP712_CHAIN_ID;
+  chainId = config.HEDERA_CHAIN_ID;
 
   agentToken = await app.signToken("agent", "settle-test");
   approverToken = await app.signToken("approver", "settle-test");

@@ -33,6 +33,14 @@ export type StepRecord = {
   note?: string | undefined;
   /** A URL the operator must act on before the step can finish (DigiLocker consent). */
   prompt?: string | undefined;
+  /**
+   * Wall-clock instant the step gives up waiting on a human.
+   *
+   * Reported mid-flight by the DigiLocker steps so the UI can count down
+   * against the same five-minute budget the poll loop enforces. Display only —
+   * nothing reads it to decide anything.
+   */
+  consentDeadline?: number | undefined;
   ms?: number | undefined;
 };
 
@@ -51,7 +59,17 @@ export type ApiCall = {
  */
 export async function api(
   path: string,
-  init: { method?: string; token?: string | null; body?: unknown } = {},
+  init: {
+    method?: string;
+    token?: string | null;
+    body?: unknown;
+    /**
+     * Abort this request. Polling loops pass one so a cycle that is still in
+     * flight when the next one starts — or when the component unmounts — is
+     * cancelled rather than left to resolve into a dead setState.
+     */
+    signal?: AbortSignal | undefined;
+  } = {},
 ): Promise<ApiCall> {
   const headers: Record<string, string> = {};
   if (init.body !== undefined) headers["content-type"] = "application/json";
@@ -62,6 +80,7 @@ export async function api(
   const res = await fetch(`${API_BASE}${path}`, {
     method: init.method ?? "GET",
     headers,
+    ...(init.signal ? { signal: init.signal } : {}),
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
   });
 

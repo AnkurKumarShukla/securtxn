@@ -108,7 +108,7 @@ export class WalletService {
     }
 
     const valid = await verifyWalletControl({
-      chainId: this.deps.config.EIP712_CHAIN_ID,
+      chainId: this.deps.config.HEDERA_CHAIN_ID,
       // The claimed address is an INPUT: the signature either recovers to it or
       // this fails. Never trust a client-asserted signer (§5).
       address: wallet.address,
@@ -170,7 +170,7 @@ export class WalletService {
     }
 
     return {
-      domain: domainFor(this.deps.config.EIP712_CHAIN_ID),
+      domain: domainFor(this.deps.config.HEDERA_CHAIN_ID),
       primaryType: "IdentityBinding" as const,
       message: buildIdentityBindingMessage({
         onboardingSessionNonce: vendor.onboardingSessionNonce,
@@ -223,7 +223,7 @@ export class WalletService {
     }
 
     const valid = await verifyIdentityBinding({
-      chainId: this.deps.config.EIP712_CHAIN_ID,
+      chainId: this.deps.config.HEDERA_CHAIN_ID,
       address: wallet.address,
       signature,
       message: buildIdentityBindingMessage({

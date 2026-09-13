@@ -14,6 +14,19 @@
 //      they accept, which is what stops the identity match being a free
 //      lookup oracle.
 //
+// LEGACY — DO NOT COPY FROM THIS FILE, AND DO NOT RESTYLE IT.
+//
+// Superseded by `/app/inbox`, `/app/escrow` and `/app/identity`; its logic was
+// extracted into `hooks/usePayeeFlow.ts` and this page was left behind intact.
+// Every style below is an inline `React.CSSProperties` object over raw hex, and
+// it carries its own copies of `Field` and the copy button. It also keeps its
+// own five-second poll, which still has the sequential fan-out that the hook no
+// longer has — another reason not to read this file for patterns.
+//
+// It is scheduled for deletion once the escrow claim path is confirmed covered
+// by `/app/escrow`. Until then nothing here changes: restyling a file you intend
+// to delete is waste, and it tells the next person the file is current.
+//
 // Spec: docs/payment-flow.md
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,8 +38,11 @@ import {
   PAYEE_CONSENT_STATEMENT,
   domainFor,
 } from "@cp/shared-types";
+import { LegacyBanner } from "../../components/ui/LegacyBanner";
 import { api, messageOf, payeeSignal } from "../../lib/flow";
+import { pollConsent } from "../../lib/digilocker";
 import { claimEscrow } from "../../lib/claim";
+import { localSigner } from "../../lib/wallet";
 import {
   accountOf,
   clearSession,
@@ -36,7 +52,7 @@ import {
 } from "../../lib/payeeSession";
 import { WorldIdStep } from "../console/WorldIdStep";
 
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_EIP712_CHAIN_ID ?? "11155111");
+const CHAIN_ID = Number(process.env.NEXT_PUBLIC_HEDERA_CHAIN_ID ?? "296");
 
 type Busy = string | null;
 
@@ -218,19 +234,15 @@ export default function PayeePage() {
             window.open(authorizationUrl, "_blank", "noopener");
             say("waiting for your DigiLocker consent…");
 
-            const deadline = Date.now() + 5 * 60_000;
-            let state = "created";
-            while (Date.now() < deadline) {
-              await new Promise((r) => setTimeout(r, 3000));
-              const poll = await api(`/vendors/${vendorId}/identity/status`, { token: t });
-              if (!poll.ok) continue;
-              state = (poll.body as { status: string }).status;
-              if (state === "succeeded") break;
-              if (state === "failed" || state === "expired") {
-                throw new Error(`DigiLocker session ${state}`);
-              }
+            // Same loop the console runs — see lib/digilocker.ts. The messages
+            // stay this page's own, because they are what the payee reads.
+            const outcome = await pollConsent({ vendorId, token: t });
+            if (outcome === "failed" || outcome === "expired") {
+              throw new Error(`DigiLocker session ${outcome}`);
             }
-            if (state !== "succeeded") throw new Error("timed out waiting for DigiLocker consent");
+            if (outcome === "timeout") {
+              throw new Error("timed out waiting for DigiLocker consent");
+            }
             setConsentUrl(null);
           } else {
             say("consent already given — completing it");
@@ -411,7 +423,11 @@ export default function PayeePage() {
         const t = await token();
         const { claimTxHash } = await claimEscrow({
           paymentId: escrow.paymentRequestId,
-          privateKey: session.privateKey,
+          // This legacy page has no wallet connection and is not getting one.
+          // It always signs with the key generated in this browser, which is
+          // what it has always done — see the header note; MetaMask support
+          // lives in `/app/*`.
+          signer: localSigner(session.privateKey),
           token: t,
           report: say,
         });
@@ -472,6 +488,7 @@ export default function PayeePage() {
   if (!session) {
     return (
       <main style={S.main}>
+        <LegacyBanner page="payee page" instead="/app/inbox" />
         <p style={S.sub}>Preparing your session…</p>
       </main>
     );
@@ -482,6 +499,7 @@ export default function PayeePage() {
 
   return (
     <main style={S.main}>
+      <LegacyBanner page="payee page" instead="/app/inbox" />
       <h1 style={S.h1}>You are the payee</h1>
       <p style={S.sub}>
         Onboard once with your own DigiLocker account, then accept or refuse payments sent to
@@ -668,7 +686,7 @@ export default function PayeePage() {
             window.location.reload();
           }}
         >
-          Reset this browser session
+          Log Out
         </button>
         <p style={S.hint}>
           Resetting mints a new payout key. The vendor you already onboarded stays on the server

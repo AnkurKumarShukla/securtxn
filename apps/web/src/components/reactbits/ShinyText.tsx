@@ -16,16 +16,16 @@ import {
 
 interface ShinyTextProps {
   text: string;
-  disabled?: boolean;
-  speed?: number;
-  className?: string;
-  color?: string;
-  shineColor?: string;
-  spread?: number;
-  yoyo?: boolean;
-  pauseOnHover?: boolean;
-  direction?: "left" | "right";
-  delay?: number;
+  disabled?: boolean | undefined;
+  speed?: number | undefined;
+  className?: string | undefined;
+  color?: string | undefined;
+  shineColor?: string | undefined;
+  spread?: number | undefined;
+  yoyo?: boolean | undefined;
+  pauseOnHover?: boolean | undefined;
+  direction?: "left" | "right" | undefined;
+  delay?: number | undefined;
 }
 
 const ShinyText: React.FC<ShinyTextProps> = ({
