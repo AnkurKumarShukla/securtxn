@@ -7,6 +7,12 @@
 # read-only filesystem, so `corepack enable` fails with EROFS trying to replace
 # it. Invoking a pinned pnpm through npx needs no global install at all.
 #
+# WHY --prod=false ON INSTALL. Render sets NODE_ENV=production for the build too,
+# and pnpm then skips devDependencies — which is where the build tools live: the
+# prisma CLI for the API, tailwind/postcss/typescript for the web. Without it the
+# install succeeds and the very next command fails with "prisma" not found. The
+# runtime deps are unaffected; tsx and next are already dependencies.
+#
 # WHY THE API STARTS WITH tsx AND NOT `node dist/`. `tsc -p apps/api` compiles
 # apps/api alone; the workspace packages it imports are TypeScript source using
 # NodeNext ".js" specifiers, so the built output resolves
@@ -33,7 +39,7 @@ services:
     region: singapore # Same region as the Supabase project (ap-southeast-1), so
       # every query does not cross an ocean.
     branch: main
-    buildCommand: npx --yes pnpm@9.12.0 install --frozen-lockfile && npx --yes pnpm@9.12.0 --filter @cp/api exec prisma generate
+    buildCommand: npx --yes pnpm@9.12.0 install --frozen-lockfile --prod=false && npx --yes pnpm@9.12.0 --filter @cp/api exec prisma generate
     startCommand: npx --yes pnpm@9.12.0 --filter @cp/api start
     healthCheckPath: /health
     envVars:
@@ -113,7 +119,7 @@ services:
     plan: free
     region: singapore
     branch: main
-    buildCommand: npx --yes pnpm@9.12.0 install --frozen-lockfile && npx --yes pnpm@9.12.0 --filter @cp/web build
+    buildCommand: npx --yes pnpm@9.12.0 install --frozen-lockfile --prod=false && npx --yes pnpm@9.12.0 --filter @cp/web build
     startCommand: npx --yes pnpm@9.12.0 --filter @cp/web start
     envVars:
       - key: NODE_VERSION
