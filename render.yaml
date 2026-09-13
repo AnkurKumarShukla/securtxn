@@ -71,6 +71,15 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://securtxn-api.onrender.com
 
+      # WHERE DIGILOCKER SENDS THE BROWSER BACK, and it is the WEB host, not
+      # this one. /identity/callback is a Next page; the API has no such route.
+      # Under the old ngrok setup a single domain fronted both, so the value
+      # derived from PUBLIC_BASE_URL happened to be right. Split across two
+      # services it is not, and the derived default would strand every user on
+      # a 404 at the one moment they cannot retry — after granting consent.
+      - key: DIGILOCKER_REDIRECT_URL
+        value: https://securtxn-web.onrender.com/identity/callback
+
       # --- set in the dashboard; never in git -------------------------------
       - key: DATABASE_URL # MUST be the Supabase SESSION POOLER. The direct host
         sync: false #      is IPv6-only and unreachable from Render.
