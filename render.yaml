@@ -93,6 +93,8 @@ services:
         sync: false
       - key: SECRET_VENDOR_LOOKUP_API_KEY
         sync: false
+      - key: CRE_CALLER_PRIVATE_KEY # the caller the DON bills the execution to
+        sync: false
 
       # --- non-secret configuration ----------------------------------------
       - key: IDENTITY_PROVIDER
@@ -109,8 +111,76 @@ services:
         value: "true"
       - key: EIP712_CHAIN_ID
         value: "296"
+      - key: LOG_LEVEL
+        value: info # debug locally; a deployed instance logs every request body
+          # at debug, and those bodies carry PAN and Aadhaar numbers.
+
+      # --- Chainlink CRE -----------------------------------------------------
+      # The gateway and the workflow id identify the DEPLOYED workflow. Changing
+      # the workflow means redeploying it and pasting the new id here; an old id
+      # does not error, it just runs the old code.
+      - key: CRE_GATEWAY_URL
+        value: https://01.gateway.zone-a.cre.chain.link
+      - key: CRE_WORKFLOW_ID
+        value: 00650bb09fd81dbd1a000b2f492cda9dafca4d414ba90911f89219f87dee4a3b
+
+      # --- World ID ----------------------------------------------------------
+      # Public identifiers. The RP SIGNING KEY is not here on purpose: only the
+      # web service signs requests with it, and this service never needs it.
+      - key: WORLD_APP_ID
+        value: app_e44f3e7a022dc3b7e807acaa0efaceaa
+      - key: WORLD_RP_ID
+        value: rp_a76c7d95ea331d5a
+      - key: WORLD_RP_SIGNER_ADDRESS
+        value: "0xd1065aD3A094FCcC890078bC01695E5DE5268164"
+      - key: WORLD_CREDENTIAL_PRESET
+        value: selfieCheckLegacy
+      - key: WORLD_ENVIRONMENT
+        value: sandbox
+      - key: WORLD_ACTION
+        value: verify-payment-approver # nullifiers are scoped to this string;
+          # changing it makes every enrolment unrecognisable.
+      - key: WORLD_VERIFY_BASE_URL
+        value: https://developer.world.org/api/v4/verify
+
+      # --- Hedera ------------------------------------------------------------
       - key: HEDERA_CHAIN_ID
         value: "296"
+      - key: HEDERA_NETWORK
+        value: testnet
+      - key: HEDERA_JSON_RPC_URL
+        value: https://testnet.hashio.io/api
+      - key: HEDERA_MIRROR_NODE_URL
+        value: https://testnet.mirrornode.hedera.com/api/v1/
+      - key: HEDERA_OPERATOR_ID
+        value: 0.0.10443799
+      - key: HCS_TOPIC_ID
+        value: 0.0.10454706 # the anchor topic; a new topic loses the chain of
+          # evidence hashes already written to this one.
+
+      # --- ATS (the tokenised bond) ------------------------------------------
+      - key: ATS_ISSUER_ACCOUNT_ID
+        value: 0.0.10443799
+      - key: ATS_SECURITY_ID
+        value: 0.0.10444329
+      - key: ATS_RESOLVER_ADDRESS
+        value: 0.0.9212226
+      - key: ATS_FACTORY_ADDRESS
+        value: 0.0.9213391
+      - key: ATS_BOND_CONFIG_ID
+        value: "0x0000000000000000000000000000000000000000000000000000000000000002"
+
+      # --- the cash leg ------------------------------------------------------
+      - key: HTLC_CONTRACT_ADDRESS
+        value: "0x8ad684cff71aa37c7aa5a53b3a443dcd3e82285e"
+      - key: TOKEN_ADDRESSES # HTS tokens answer ERC-20 at their long-zero address
+        value: '{"STUSDC":"0x00000000000000000000000000000000009ff58b","USDC":"0x0000000000000000000000000000000000068cda"}'
+
+      # --- policy ------------------------------------------------------------
+      - key: TIER_AMOUNT_LIMITS
+        value: '{"TIER0_UNVERIFIED":"0","TIER1_LIVENESS":"1000","TIER2_IDENTITY":"50000"}'
+      - key: SANDBOX_BASE_URL
+        value: https://api.sandbox.co.in
 
   # ---------------------------------------------------------------- WEB -----
   - type: web
@@ -147,14 +217,15 @@ services:
       - key: NEXT_PUBLIC_HEDERA_JSON_RPC_URL
         value: https://testnet.hashio.io/api
 
-      # World ID. The app id and rp id are public identifiers; the signing key
-      # is not, and is the only secret this service needs.
+      # World ID. The app id, rp id and action are public identifiers — they
+      # ship in the client bundle either way — so they belong in the blueprint.
+      # The signing key is the only secret this service needs.
       - key: NEXT_PUBLIC_WORLD_APP_ID
-        sync: false
+        value: app_e44f3e7a022dc3b7e807acaa0efaceaa
       - key: NEXT_PUBLIC_WORLD_RP_ID
-        sync: false
+        value: rp_a76c7d95ea331d5a
       - key: NEXT_PUBLIC_WORLD_ACTION
-        sync: false
+        value: verify-payment-approver
       - key: NEXT_PUBLIC_WORLD_ENVIRONMENT
         value: sandbox
       - key: NEXT_PUBLIC_WORLD_PRESET
